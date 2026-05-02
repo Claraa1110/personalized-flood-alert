@@ -8,7 +8,7 @@ from app.api.test import router as test_router
 
 load_dotenv()
 
-app = FastAPI()
+app = FastAPI(title="淹水預警系統 API")
 app.include_router(items_router, prefix="/api")
 app.include_router(test_router, prefix="/api")
 
