@@ -1,18 +1,16 @@
 import os
 from dotenv import load_dotenv
-from sqlalchemy import create_engine, text
+from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession, async_sessionmaker
+from sqlalchemy.orm import DeclarativeBase
 
 load_dotenv()
 
-engine = create_engine(os.getenv("DATABASE_URL"))
+_url = os.getenv("DATABASE_URL", "").replace("postgresql://", "postgresql+asyncpg://")
 
-def check_db():
-    with engine.connect() as conn:
-        result = conn.execute(text("SELECT 1"))
-        print("連線成功:", result.fetchone())
+engine = create_async_engine(_url, echo=True)
 
-        result = conn.execute(text("SELECT PostGIS_Version()"))
-        print("PostGIS 版本:", result.fetchone()[0])
+AsyncSessionLocal = async_sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
 
-if __name__ == "__main__":
-    check_db()
+
+class Base(DeclarativeBase):
+    pass
