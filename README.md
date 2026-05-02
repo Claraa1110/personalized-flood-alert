@@ -58,10 +58,11 @@ uv run alembic downgrade -1
 ```
 FF/
 ├── app/
+│   ├── __init__.py
 │   ├── main.py            # FastAPI app 入口
 │   ├── database.py        # async engine + session
-│   ├── dependencies.py    # Dependency Injection
-│   ├── api/               # Router
+│   ├── dependencies.py    # get_db() 等共用依賴
+│   ├── api/               # Routers
 │   │   ├── items.py       # 練習用 CRUD
 │   │   └── test.py        # 測試 endpoints
 │   ├── models/            # SQLAlchemy ORM Models
@@ -74,12 +75,17 @@ FF/
 │   │   ├── alert.py
 │   │   └── rainfall.py
 │   └── services/
-├── alembic/               # DB migrations
+├── alembic/               # Migration 管理
+│   └── versions/
 ├── MobileApp/             # Expo 前端
 │   └── src/
 │       ├── navigation/
 │       └── screens/
+├── alembic.ini
 ├── Dockerfile
 ├── docker-compose.yml
-└── .env.example
+├── pyproject.toml         # uv 套件管理
+├── .env                   # 不進 git
+├── .env.example           # 進 git
+└── README.md
 ```
