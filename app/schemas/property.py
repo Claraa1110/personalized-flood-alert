@@ -18,7 +18,12 @@ class PropertyCreate(PropertyBase):
     pass
 
 
-class PropertyResponse(PropertyBase):
+class PropertyResponse(BaseModel):
     id: UUID
+    name: str
+    type: str
+    address: Optional[str] = None
+    floor_level: int
+    alert_enabled: bool
     created_at: datetime
     model_config = ConfigDict(from_attributes=True)

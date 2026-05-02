@@ -4,11 +4,13 @@ import httpx
 from fastapi import FastAPI, Query, HTTPException
 from dotenv import load_dotenv
 from app.api.items import router as items_router
+from app.api.test import router as test_router
 
 load_dotenv()
 
 app = FastAPI()
 app.include_router(items_router, prefix="/api")
+app.include_router(test_router, prefix="/api")
 
 
 def haversine(lat1: float, lon1: float, lat2: float, lon2: float) -> float:
