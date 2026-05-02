@@ -5,9 +5,11 @@
 ## 技術棧
 
 - **前端**：React Native + Expo (TypeScript)
-- **後端**：FastAPI (Python)
+- **後端**：FastAPI + SQLAlchemy 2.0 async (Python)
 - **資料庫**：PostgreSQL + PostGIS（Supabase 雲端）
+- **Migration**：Alembic
 - **LLM**：Anthropic Claude API
+- **外部 API**：CWA 中央氣象署開放資料
 
 ## 本地開發
 
@@ -28,10 +30,25 @@ cd MobileApp
 npx expo start
 ```
 
+後端 API 文件：`http://localhost:8000/docs`
+
+## 資料庫 Migration
+
+```bash
+# 建立新 migration
+uv run alembic revision --autogenerate -m "description"
+
+# 套用 migration
+uv run alembic upgrade head
+
+# 回滾一個版本
+uv run alembic downgrade -1
+```
+
 ## 主要功能
 
-- 財產管理：新增並管理個人財產位置
-- 即時雨量監測：串接 CWA 自動雨量站 API
+- 財產管理：新增並管理個人財產位置（PostGIS 空間查詢）
+- 即時雨量監測：串接 CWA 自動雨量站 API（O-A0002-001）
 - 新聞 NLP：分析淹水相關新聞
 - 風險評估：結合雨量、地形、財產位置計算風險
 - 推播通知：風險達閾值時主動通知
@@ -40,12 +57,25 @@ npx expo start
 
 ```
 FF/
-├── app/                # FastAPI 後端
-│   ├── main.py
-│   ├── api/
-│   ├── models/
+├── app/
+│   ├── main.py            # FastAPI app 入口
+│   ├── database.py        # async engine + session
+│   ├── dependencies.py    # Dependency Injection
+│   ├── api/               # Router
+│   │   ├── items.py       # 練習用 CRUD
+│   │   └── test.py        # 測試 endpoints
+│   ├── models/            # SQLAlchemy ORM Models
+│   │   ├── property.py
+│   │   ├── alert.py
+│   │   ├── rainfall.py
+│   │   └── news.py
+│   ├── schemas/           # Pydantic Schemas
+│   │   ├── property.py
+│   │   ├── alert.py
+│   │   └── rainfall.py
 │   └── services/
-├── MobileApp/          # Expo 前端
+├── alembic/               # DB migrations
+├── MobileApp/             # Expo 前端
 │   └── src/
 │       ├── navigation/
 │       └── screens/
