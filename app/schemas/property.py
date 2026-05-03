@@ -26,4 +26,6 @@ class PropertyResponse(BaseModel):
     floor_level: int
     alert_enabled: bool
     created_at: datetime
+    latitude: float
+    longitude: float
     model_config = ConfigDict(from_attributes=True)
