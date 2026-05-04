@@ -5,12 +5,14 @@ from fastapi import FastAPI, Query, HTTPException
 from dotenv import load_dotenv
 from app.api.test import router as test_router
 from app.api.properties import router as properties_router
+from app.api.location import router as location_router
 
 load_dotenv()
 
 app = FastAPI(title="淹水預警系統 API")
 app.include_router(test_router, prefix="/api")
 app.include_router(properties_router, prefix="/api")
+app.include_router(location_router, prefix="/api")
 
 
 def haversine(lat1: float, lon1: float, lat2: float, lon2: float) -> float:
