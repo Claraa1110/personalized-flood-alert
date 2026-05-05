@@ -28,4 +28,6 @@ class PropertyResponse(BaseModel):
     created_at: datetime
     latitude: float
     longitude: float
+    district_name: Optional[str] = None
+    flood_risk_level: Optional[int] = None
     model_config = ConfigDict(from_attributes=True)
