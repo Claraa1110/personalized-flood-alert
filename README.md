@@ -47,11 +47,29 @@ uv run alembic downgrade -1
 
 ## 主要功能
 
-- 財產管理：新增並管理個人財產位置（PostGIS 空間查詢）
+- 財產管理：新增並管理個人財產位置，自動查詢行政區與淹水潛勢等級（PostGIS 空間查詢）
+- 行政區查詢：根據座標查詢對應鄉鎮市區（全台 368 個行政區）
+- 淹水潛勢查詢：根據座標查詢 24 小時 200mm 情境下的淹水風險等級（全台 22 縣市）
 - 即時雨量監測：串接 CWA 自動雨量站 API（O-A0002-001）
-- 新聞 NLP：分析淹水相關新聞
 - 風險評估：結合雨量、地形、財產位置計算風險
 - 推播通知：風險達閾值時主動通知
+
+## API 端點
+
+| 方法 | 路徑 | 說明 |
+|------|------|------|
+| POST | /api/properties | 新增財產（自動填入行政區與淹水等級） |
+| GET | /api/properties | 查詢財產列表 |
+| GET | /api/properties/{id} | 查詢單筆財產 |
+| PUT | /api/properties/{id} | 修改財產 |
+| DELETE | /api/properties/{id} | 刪除財產 |
+| GET | /api/location/district | 根據座標查詢行政區 |
+| GET | /api/location/flood-risk | 根據座標查詢淹水潛勢等級 |
+
+## 資料來源
+
+- 行政區界線：內政部鄉鎮市區界線（114年版）
+- 淹水潛勢圖：經濟部水利署 24 小時 200mm 情境（22 縣市）
 
 ## 專案結構
 
@@ -63,10 +81,13 @@ FF/
 │   ├── database.py        # async engine + session
 │   ├── dependencies.py    # get_db() 等共用依賴
 │   ├── api/               # Routers
-│   │   ├── items.py       # 練習用 CRUD
+│   │   ├── properties.py  # 財產 CRUD
+│   │   ├── location.py    # 行政區 & 淹水潛勢查詢
 │   │   └── test.py        # 測試 endpoints
 │   ├── models/            # SQLAlchemy ORM Models
 │   │   ├── property.py
+│   │   ├── district.py
+│   │   ├── flood_risk.py
 │   │   ├── alert.py
 │   │   ├── rainfall.py
 │   │   └── news.py
@@ -75,6 +96,11 @@ FF/
 │   │   ├── alert.py
 │   │   └── rainfall.py
 │   └── services/
+├── scripts/               # 資料匯入腳本
+│   ├── import_districts.py
+│   ├── import_flood_risk.py
+│   └── import_all_flood_risk.py
+├── data/                  # Shapefile 資料（不進 git）
 ├── alembic/               # Migration 管理
 │   └── versions/
 ├── MobileApp/             # Expo 前端

@@ -4,7 +4,6 @@ Usage: uv run python scripts/import_all_flood_risk.py
 """
 import asyncio
 import os
-from pathlib import Path
 
 import geopandas as gpd
 from dotenv import load_dotenv
