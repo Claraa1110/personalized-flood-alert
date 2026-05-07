@@ -1,10 +1,13 @@
 import os
+import xml.etree.ElementTree as ET
 from datetime import datetime
 
 import httpx
 from sqlalchemy import text
 
 from app.database import AsyncSessionLocal
+
+QPE_NS = {"cwa": "urn:cwa:gov:tw:cwacommon:0.1"}
 
 CWA_API_KEY = os.getenv("CWA_API_KEY")
 
@@ -117,3 +120,71 @@ async def save_rainfall_observations(stations: list):
             continue
 
     print(f"成功寫入 {count} 筆")
+
+
+async def get_qpe_rainfall(lat: float, lng: float) -> dict:
+    """給定座標，從 QPE API 取得該位置的雨量估計值"""
+    col = round((lng - 118) / 0.0125)
+    row = round((lat - 20) / 0.0125)
+
+    if not (0 <= col < 441 and 0 <= row < 561):
+        return {"rainfall_mm": 0.0, "source": "qpe", "note": "座標超出範圍"}
+
+    index = row * 441 + col
+
+    try:
+        url = "https://opendata.cwa.gov.tw/fileapi/v1/opendataapi/O-B0045-001"
+        async with httpx.AsyncClient(timeout=60, verify=False, follow_redirects=True) as client:
+            response = await client.get(url, params={"Authorization": CWA_API_KEY})
+            response.raise_for_status()
+
+        root = ET.fromstring(response.text)
+        dataset = root.find("cwa:dataset", QPE_NS)
+        contents = dataset.find("cwa:contents", QPE_NS)
+        content = contents.find("cwa:content", QPE_NS)
+        values = content.text.strip().split(",")
+
+        rainfall = max(0.0, float(values[index])) if index < len(values) else 0.0
+
+        return {
+            "rainfall_mm": rainfall,
+            "source": "qpe",
+            "grid_index": index,
+            "lat": lat,
+            "lng": lng,
+        }
+
+    except Exception as e:
+        print(f"QPE 查詢失敗：{e}")
+        return await get_nearest_station_rainfall(lat, lng)
+
+
+async def get_nearest_station_rainfall(lat: float, lng: float) -> dict:
+    """備案：從資料庫找最近的雨量站資料"""
+    async with AsyncSessionLocal() as session:
+        result = await session.execute(
+            text("""
+                SELECT rainfall_mm, rainfall_1hr, rainfall_3hr, rainfall_24hr,
+                       station_name,
+                       ST_Distance(location, ST_MakePoint(:lng, :lat)::geography) AS dist_m
+                FROM rainfall_observations
+                WHERE ST_DWithin(location, ST_MakePoint(:lng, :lat)::geography, 50000)
+                ORDER BY dist_m
+                LIMIT 1
+            """),
+            {"lat": lat, "lng": lng},
+        )
+        row = result.fetchone()
+
+    if not row:
+        return {"rainfall_mm": 0.0, "source": "none"}
+
+    return {
+        "rainfall_mm": row.rainfall_mm,
+        "rainfall_1hr": row.rainfall_1hr,
+        "rainfall_3hr": row.rainfall_3hr,
+        "rainfall_24hr": row.rainfall_24hr,
+        "source": "station",
+        "station_name": row.station_name,
+        "dist_m": round(row.dist_m),
+    }
