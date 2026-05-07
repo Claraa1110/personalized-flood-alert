@@ -12,20 +12,31 @@ CWA_API_KEY = os.getenv("CWA_API_KEY")
 async def fetch_rainfall_stations():
     """抓取全台雨量站觀測資料並寫入資料庫"""
     url = "https://opendata.cwa.gov.tw/api/v1/rest/datastore/O-A0002-001"
-    params = {
-        "Authorization": CWA_API_KEY,
-        "format": "JSON",
-        "limit": 500,
-    }
+    limit = 500
+    offset = 0
+    all_stations = []
 
     async with httpx.AsyncClient(timeout=30, verify=False) as client:
-        response = await client.get(url, params=params)
-        response.raise_for_status()
-        data = response.json()
+        while True:
+            params = {
+                "Authorization": CWA_API_KEY,
+                "format": "JSON",
+                "limit": limit,
+                "offset": offset,
+            }
+            response = await client.get(url, params=params)
+            response.raise_for_status()
+            data = response.json()
+            stations = data["records"]["Station"]
+            if not stations:
+                break
+            all_stations.extend(stations)
+            if len(stations) < limit:
+                break
+            offset += limit
 
-    stations = data["records"]["Station"]
-    print(f"抓到 {len(stations)} 個雨量站")
-    await save_rainfall_observations(stations)
+    print(f"抓到 {len(all_stations)} 個雨量站")
+    await save_rainfall_observations(all_stations)
     print("寫入完成")
 
 
@@ -38,31 +49,31 @@ def parse_rainfall(value) -> float:
 
 
 async def save_rainfall_observations(stations: list):
-    async with AsyncSessionLocal() as session:
-        count = 0
-        for station in stations:
-            try:
-                lat, lng = None, None
-                for coord in station.get("GeoInfo", {}).get("Coordinates", []):
-                    if coord.get("CoordinateName") == "WGS84":
-                        lat = float(coord["StationLatitude"])
-                        lng = float(coord["StationLongitude"])
-                        break
+    count = 0
+    for station in stations:
+        try:
+            lat, lng = None, None
+            for coord in station.get("GeoInfo", {}).get("Coordinates", []):
+                if coord.get("CoordinateName") == "WGS84":
+                    lat = float(coord["StationLatitude"])
+                    lng = float(coord["StationLongitude"])
+                    break
 
-                if lat is None or lng is None:
-                    continue
+            if lat is None or lng is None:
+                continue
 
-                rainfall_elem = station.get("RainfallElement", {})
-                rainfall_now = parse_rainfall(rainfall_elem.get("Now", {}).get("Precipitation"))
-                rainfall_1hr = parse_rainfall(rainfall_elem.get("Past1hr", {}).get("Precipitation"))
-                rainfall_3hr = parse_rainfall(rainfall_elem.get("Past3hr", {}).get("Precipitation"))
-                rainfall_24hr = parse_rainfall(rainfall_elem.get("Past24hr", {}).get("Precipitation"))
+            rainfall_elem = station.get("RainfallElement", {})
+            rainfall_now = parse_rainfall(rainfall_elem.get("Now", {}).get("Precipitation"))
+            rainfall_1hr = parse_rainfall(rainfall_elem.get("Past1hr", {}).get("Precipitation"))
+            rainfall_3hr = parse_rainfall(rainfall_elem.get("Past3hr", {}).get("Precipitation"))
+            rainfall_24hr = parse_rainfall(rainfall_elem.get("Past24hr", {}).get("Precipitation"))
 
-                obs_time_str = station.get("ObsTime", {}).get("DateTime", "")
-                observed_at = datetime.fromisoformat(obs_time_str).replace(tzinfo=None) if obs_time_str else datetime.now()
+            obs_time_str = station.get("ObsTime", {}).get("DateTime", "")
+            observed_at = datetime.fromisoformat(obs_time_str).replace(tzinfo=None) if obs_time_str else datetime.now()
 
-                geo = station.get("GeoInfo", {})
+            geo = station.get("GeoInfo", {})
 
+            async with AsyncSessionLocal() as session:
                 await session.execute(
                     text("""
                         INSERT INTO rainfall_observations
@@ -98,12 +109,11 @@ async def save_rainfall_observations(stations: list):
                         "observed_at": observed_at,
                     },
                 )
-                count += 1
+                await session.commit()
+            count += 1
 
-            except Exception as e:
-                print(f"  站 {station.get('StationName')} 失敗：{e}")
-                await session.rollback()
-                continue
+        except Exception as e:
+            print(f"  站 {station.get('StationName')} 失敗：{e}")
+            continue
 
-        await session.commit()
-        print(f"成功寫入 {count} 筆")
+    print(f"成功寫入 {count} 筆")
