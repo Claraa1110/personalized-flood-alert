@@ -30,4 +30,7 @@ class PropertyResponse(BaseModel):
     longitude: float
     district_name: Optional[str] = None
     flood_risk_level: Optional[int] = None
+    rainfall_now_mm: Optional[float] = None
+    rainfall_1hr_mm: Optional[float] = None
+    rainfall_24hr_mm: Optional[float] = None
     model_config = ConfigDict(from_attributes=True)

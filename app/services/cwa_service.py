@@ -11,9 +11,12 @@ QPE_NS = {"cwa": "urn:cwa:gov:tw:cwacommon:0.1"}
 
 CWA_API_KEY = os.getenv("CWA_API_KEY")
 
+last_rainfall_update: datetime | None = None
+
 
 async def fetch_rainfall_stations():
     """抓取全台雨量站觀測資料並寫入資料庫"""
+    global last_rainfall_update
     try:
         url = "https://opendata.cwa.gov.tw/api/v1/rest/datastore/O-A0002-001"
         limit = 500
@@ -41,6 +44,7 @@ async def fetch_rainfall_stations():
 
         print(f"抓到 {len(all_stations)} 個雨量站")
         await save_rainfall_observations(all_stations)
+        last_rainfall_update = datetime.now()
         print("寫入完成")
     except Exception as e:
         print(f"抓取雨量站資料失敗：{e}")

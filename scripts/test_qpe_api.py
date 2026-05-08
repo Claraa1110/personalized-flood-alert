@@ -37,7 +37,7 @@ async def test_qpe():
         values = [float(v) for v in data_str.split(",") if v.strip()]
         nonzero = [v for v in values if v > 0]
 
-        print(f"\n=== 網格資料 ===")
+        print("\n=== 網格資料 ===")
         print(f"  總格點數：{len(values)}")
         print(f"  有降雨格點：{len(nonzero)}")
         if values:
