@@ -8,6 +8,7 @@
 - **後端**：FastAPI + SQLAlchemy 2.0 async (Python)
 - **資料庫**：PostgreSQL + PostGIS（Supabase 雲端）
 - **Migration**：Alembic
+- **排程**：APScheduler（AsyncIOScheduler）
 - **LLM**：Anthropic Claude API
 - **外部 API**：CWA 中央氣象署開放資料
 
@@ -23,7 +24,7 @@ cp .env.example .env
 # 編輯 .env 填入真實 key
 
 # 3. 啟動後端
-docker-compose up
+uv run uvicorn app.main:app --reload
 
 # 4. 啟動前端
 cd MobileApp
@@ -50,7 +51,7 @@ uv run alembic downgrade -1
 - 財產管理：新增並管理個人財產位置，自動查詢行政區與淹水潛勢等級（PostGIS 空間查詢）
 - 行政區查詢：根據座標查詢對應鄉鎮市區（全台 368 個行政區）
 - 淹水潛勢查詢：根據座標查詢 24 小時 200mm 情境下的淹水風險等級（全台 22 縣市）
-- 即時雨量監測：串接 CWA 自動雨量站 API（O-A0002-001）
+- 即時雨量監測：串接 CWA 自動雨量站 API（O-A0002-001），每 10 分鐘自動排程更新，支援 QPE 雷達格點與實體雨量站雙來源
 - 風險評估：結合雨量、地形、財產位置計算風險
 - 推播通知：風險達閾值時主動通知
 
@@ -65,11 +66,15 @@ uv run alembic downgrade -1
 | DELETE | /api/properties/{id} | 刪除財產 |
 | GET | /api/location/district | 根據座標查詢行政區 |
 | GET | /api/location/flood-risk | 根據座標查詢淹水潛勢等級 |
+| GET | /api/rainfall | 查詢座標附近即時雨量（QPE + 雨量站） |
+| GET | /health/scheduler | 排程系統健康檢查 |
 
 ## 資料來源
 
 - 行政區界線：內政部鄉鎮市區界線（114年版）
 - 淹水潛勢圖：經濟部水利署 24 小時 200mm 情境（22 縣市）
+- 即時雨量：CWA 自動雨量站（O-A0002-001）
+- QPE 雷達降雨估算：CWA（O-B0045-001）
 
 ## 專案結構
 
@@ -80,9 +85,11 @@ FF/
 │   ├── main.py            # FastAPI app 入口
 │   ├── database.py        # async engine + session
 │   ├── dependencies.py    # get_db() 等共用依賴
+│   ├── scheduler.py       # APScheduler 排程設定
 │   ├── api/               # Routers
 │   │   ├── properties.py  # 財產 CRUD
 │   │   ├── location.py    # 行政區 & 淹水潛勢查詢
+│   │   ├── rainfall.py    # 雨量查詢
 │   │   └── test.py        # 測試 endpoints
 │   ├── models/            # SQLAlchemy ORM Models
 │   │   ├── property.py
@@ -96,6 +103,7 @@ FF/
 │   │   ├── alert.py
 │   │   └── rainfall.py
 │   └── services/
+│       └── cwa_service.py # CWA API 串接 & 雨量資料寫入
 ├── scripts/               # 資料匯入腳本
 │   ├── import_districts.py
 │   ├── import_flood_risk.py
