@@ -1,5 +1,7 @@
 import os
 import math
+from contextlib import asynccontextmanager
+
 import httpx
 from fastapi import FastAPI, Query, HTTPException
 from dotenv import load_dotenv
@@ -7,10 +9,31 @@ from app.api.test import router as test_router
 from app.api.properties import router as properties_router
 from app.api.location import router as location_router
 from app.api.rainfall import router as rainfall_router
+from app.scheduler import setup_scheduler
+from app.services.cwa_service import fetch_rainfall_stations
 
 load_dotenv()
 
-app = FastAPI(title="淹水預警系統 API")
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    scheduler = setup_scheduler()
+    scheduler.start()
+    print("排程系統啟動")
+
+    try:
+        await fetch_rainfall_stations()
+        print("初始雨量資料載入完成")
+    except Exception as e:
+        print(f"初始載入失敗（不影響服務）：{e}")
+
+    yield
+
+    scheduler.shutdown()
+    print("排程系統關閉")
+
+
+app = FastAPI(title="淹水預警系統 API", lifespan=lifespan)
 app.include_router(test_router, prefix="/api")
 app.include_router(properties_router, prefix="/api")
 app.include_router(location_router, prefix="/api")

@@ -14,33 +14,36 @@ CWA_API_KEY = os.getenv("CWA_API_KEY")
 
 async def fetch_rainfall_stations():
     """抓取全台雨量站觀測資料並寫入資料庫"""
-    url = "https://opendata.cwa.gov.tw/api/v1/rest/datastore/O-A0002-001"
-    limit = 500
-    offset = 0
-    all_stations = []
+    try:
+        url = "https://opendata.cwa.gov.tw/api/v1/rest/datastore/O-A0002-001"
+        limit = 500
+        offset = 0
+        all_stations = []
 
-    async with httpx.AsyncClient(timeout=30, verify=False) as client:
-        while True:
-            params = {
-                "Authorization": CWA_API_KEY,
-                "format": "JSON",
-                "limit": limit,
-                "offset": offset,
-            }
-            response = await client.get(url, params=params)
-            response.raise_for_status()
-            data = response.json()
-            stations = data["records"]["Station"]
-            if not stations:
-                break
-            all_stations.extend(stations)
-            if len(stations) < limit:
-                break
-            offset += limit
+        async with httpx.AsyncClient(timeout=30, verify=False) as client:
+            while True:
+                params = {
+                    "Authorization": CWA_API_KEY,
+                    "format": "JSON",
+                    "limit": limit,
+                    "offset": offset,
+                }
+                response = await client.get(url, params=params)
+                response.raise_for_status()
+                data = response.json()
+                stations = data["records"]["Station"]
+                if not stations:
+                    break
+                all_stations.extend(stations)
+                if len(stations) < limit:
+                    break
+                offset += limit
 
-    print(f"抓到 {len(all_stations)} 個雨量站")
-    await save_rainfall_observations(all_stations)
-    print("寫入完成")
+        print(f"抓到 {len(all_stations)} 個雨量站")
+        await save_rainfall_observations(all_stations)
+        print("寫入完成")
+    except Exception as e:
+        print(f"抓取雨量站資料失敗：{e}")
 
 
 def parse_rainfall(value) -> float:
