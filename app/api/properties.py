@@ -13,9 +13,9 @@ router = APIRouter()
 DEFAULT_USER_ID = UUID("00000000-0000-0000-0000-000000000001")
 
 
-def to_response(prop: Property) -> PropertyResponse:
+def to_response(prop: Property, rainfall_row=None) -> PropertyResponse:
     shape = to_shape(prop.location)
-    return PropertyResponse(
+    response = PropertyResponse(
         id=prop.id,
         name=prop.name,
         type=prop.type,
@@ -28,6 +28,30 @@ def to_response(prop: Property) -> PropertyResponse:
         district_name=prop.district_name,
         flood_risk_level=prop.flood_risk_level,
     )
+    if rainfall_row:
+        response.rainfall_now_mm = rainfall_row.rainfall_mm
+        response.rainfall_1hr_mm = rainfall_row.rainfall_1hr
+        response.rainfall_24hr_mm = rainfall_row.rainfall_24hr
+    return response
+
+
+async def lookup_rainfall(db: AsyncSession, lat: float, lng: float):
+    result = await db.execute(
+        text("""
+            SELECT rainfall_mm, rainfall_1hr, rainfall_24hr
+            FROM rainfall_observations
+            WHERE ST_DWithin(
+                location,
+                ST_MakePoint(:lng, :lat)::geography,
+                50000
+            )
+            ORDER BY observed_at DESC,
+                     ST_Distance(location, ST_MakePoint(:lng, :lat)::geography)
+            LIMIT 1
+        """),
+        {"lat": lat, "lng": lng},
+    )
+    return result.fetchone()
 
 
 async def lookup_district_and_risk(db: AsyncSession, lat: float, lng: float):
@@ -100,7 +124,12 @@ async def list_properties(
         select(Property).where(Property.user_id == x_test_user_id)
     )
     props = result.scalars().all()
-    return [to_response(p) for p in props]
+    responses = []
+    for p in props:
+        shape = to_shape(p.location)
+        rainfall_row = await lookup_rainfall(db, shape.y, shape.x)
+        responses.append(to_response(p, rainfall_row))
+    return responses
 
 
 @router.get("/properties/{property_id}", response_model=PropertyResponse)
@@ -118,7 +147,9 @@ async def get_property(
     prop = result.scalar_one_or_none()
     if not prop:
         raise HTTPException(status_code=404, detail="找不到這個財產")
-    return to_response(prop)
+    shape = to_shape(prop.location)
+    rainfall_row = await lookup_rainfall(db, shape.y, shape.x)
+    return to_response(prop, rainfall_row)
 
 
 @router.put("/properties/{property_id}", response_model=PropertyResponse)
