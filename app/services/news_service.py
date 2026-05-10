@@ -204,3 +204,99 @@ async def fetch_and_classify_news():
     """抓取新聞 + 分類，排程用"""
     await fetch_news()
     await classify_unclassified_news()
+
+
+async def get_location_centroid(location_name: str, db) -> tuple[float, float] | None:
+    """把地名轉成座標（查 districts 表的中心點）"""
+    result = await db.execute(
+        text("""
+            SELECT
+                ST_X(ST_Centroid(geometry::geometry)) AS lng,
+                ST_Y(ST_Centroid(geometry::geometry)) AS lat
+            FROM districts
+            WHERE town_name LIKE :name
+               OR county_name LIKE :name
+            LIMIT 1
+        """),
+        {"name": f"%{location_name}%"},
+    )
+    row = result.fetchone()
+    if row:
+        return (row.lat, row.lng)
+    return None
+
+
+async def extract_locations_for_flood_news():
+    """對所有淹水新聞做地名抽取"""
+    from app.services.llm_service import extract_locations
+
+    async with AsyncSessionLocal() as session:
+        result = await session.execute(
+            text("""
+                SELECT id, title FROM news_articles
+                WHERE is_flood_related = true
+                AND (locations IS NULL OR locations::text = '[]')
+                AND published_at > NOW() - INTERVAL '24 hours'
+                ORDER BY published_at DESC
+                LIMIT 50
+            """)
+        )
+        rows = result.fetchall()
+
+        if not rows:
+            logger.info("沒有需要地名抽取的新聞")
+            return 0
+
+        count = 0
+        for row in rows:
+            try:
+                locations = extract_locations(row.title)
+
+                if not locations:
+                    await session.execute(
+                        text("UPDATE news_articles SET locations = '[]' WHERE id = :id"),
+                        {"id": row.id},
+                    )
+                    continue
+
+                coords = None
+                for loc in locations:
+                    coords = await get_location_centroid(loc, session)
+                    if coords:
+                        break
+
+                if coords:
+                    lat, lng = coords
+                    await session.execute(
+                        text("""
+                            UPDATE news_articles
+                            SET locations = :locations,
+                                location_geom = ST_MakePoint(:lng, :lat)::geography
+                            WHERE id = :id
+                        """),
+                        {
+                            "locations": json.dumps(locations, ensure_ascii=False),
+                            "lat": lat,
+                            "lng": lng,
+                            "id": row.id,
+                        },
+                    )
+                else:
+                    await session.execute(
+                        text("UPDATE news_articles SET locations = :locations WHERE id = :id"),
+                        {
+                            "locations": json.dumps(locations, ensure_ascii=False),
+                            "id": row.id,
+                        },
+                    )
+
+                count += 1
+                logger.info(f"地名抽取：{row.title[:30]} → {locations}")
+
+            except Exception as e:
+                logger.error(f"地名抽取失敗：{row.title[:30]}，錯誤：{e}")
+                continue
+
+        await session.commit()
+        logger.info(f"地名抽取完成，共處理 {count} 則")
+        return count
