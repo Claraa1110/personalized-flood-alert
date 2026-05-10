@@ -201,9 +201,10 @@ async def classify_unclassified_news():
 
 
 async def fetch_and_classify_news():
-    """抓取新聞 + 分類，排程用"""
+    """排程用：抓新聞 + 分類 + 地名抽取"""
     await fetch_news()
     await classify_unclassified_news()
+    await extract_locations_for_flood_news()
 
 
 async def get_location_centroid(location_name: str, db) -> tuple[float, float] | None:

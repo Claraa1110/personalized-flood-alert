@@ -10,6 +10,7 @@ from app.api.test import router as test_router
 from app.api.properties import router as properties_router
 from app.api.location import router as location_router
 from app.api.rainfall import router as rainfall_router
+from app.api.alerts import router as alerts_router
 from app.scheduler import setup_scheduler
 from app.services.cwa_service import fetch_rainfall_stations
 
@@ -39,6 +40,7 @@ app.include_router(test_router, prefix="/api")
 app.include_router(properties_router, prefix="/api")
 app.include_router(location_router, prefix="/api")
 app.include_router(rainfall_router, prefix="/api")
+app.include_router(alerts_router, prefix="/api")
 
 
 def haversine(lat1: float, lon1: float, lat2: float, lon2: float) -> float:
