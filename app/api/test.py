@@ -23,9 +23,9 @@ async def test_postgis(
         select(
             Property.name,
             ST_Distance(Property.location, center).label("dist_m"),
-        ).where(
-            ST_DWithin(Property.location, center, radius)
-        ).order_by("dist_m")
+        )
+        .where(ST_DWithin(Property.location, center, radius))
+        .order_by("dist_m")
     )
     rows = result.all()
 
@@ -48,15 +48,17 @@ async def test_integrated(
         select(
             Property.name,
             ST_Distance(Property.location, center).label("dist_m"),
-        ).where(
-            ST_DWithin(Property.location, center, 5000)
-        ).order_by("dist_m")
+        )
+        .where(ST_DWithin(Property.location, center, 5000))
+        .order_by("dist_m")
     )
     rows = result.all()
 
     return {
         "message": "整合測試成功",
         "center": {"lat": lat, "lng": lng},
-        "nearby_properties": [{"name": r.name, "dist_m": round(r.dist_m, 1)} for r in rows],
+        "nearby_properties": [
+            {"name": r.name, "dist_m": round(r.dist_m, 1)} for r in rows
+        ],
         "total": len(rows),
     }

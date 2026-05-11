@@ -2,6 +2,7 @@
 Test CWA rainfall station API to confirm data structure.
 Usage: uv run python scripts/test_cwa_api.py
 """
+
 import asyncio
 import json
 import os

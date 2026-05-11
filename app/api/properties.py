@@ -65,7 +65,9 @@ async def lookup_district_and_risk(db: AsyncSession, lat: float, lng: float):
         {"lat": lat, "lng": lng},
     )
     district_row = district_result.fetchone()
-    district_name = f"{district_row.county_name}{district_row.town_name}" if district_row else None
+    district_name = (
+        f"{district_row.county_name}{district_row.town_name}" if district_row else None
+    )
 
     flood_result = await db.execute(
         text("""
@@ -93,7 +95,9 @@ async def create_property(
     db: AsyncSession = Depends(get_db),
     x_test_user_id: UUID = Header(default=DEFAULT_USER_ID),
 ):
-    location = from_shape(Point(property_data.longitude, property_data.latitude), srid=4326)
+    location = from_shape(
+        Point(property_data.longitude, property_data.latitude), srid=4326
+    )
     district_name, flood_risk_level = await lookup_district_and_risk(
         db, property_data.latitude, property_data.longitude
     )
@@ -175,7 +179,9 @@ async def update_property(
 
     prop.name = property_data.name
     prop.type = property_data.type
-    prop.location = from_shape(Point(property_data.longitude, property_data.latitude), srid=4326)
+    prop.location = from_shape(
+        Point(property_data.longitude, property_data.latitude), srid=4326
+    )
     prop.address = property_data.address
     prop.floor_level = property_data.floor_level or 1
     prop.alert_enabled = property_data.alert_enabled

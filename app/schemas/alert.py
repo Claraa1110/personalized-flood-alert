@@ -6,7 +6,7 @@ from datetime import datetime
 
 class AlertBase(BaseModel):
     property_id: UUID
-    level: Literal['notice', 'warning', 'emergency']
+    level: Literal["notice", "warning", "emergency"]
     message: str
 
 

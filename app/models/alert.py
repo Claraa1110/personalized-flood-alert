@@ -7,7 +7,7 @@ from app.database import Base
 
 
 class Alert(Base):
-    __tablename__ = 'alerts'
+    __tablename__ = "alerts"
 
     id: Mapped[UUID] = mapped_column(primary_key=True, default=uuid4)
     property_id: Mapped[UUID] = mapped_column(nullable=False)
