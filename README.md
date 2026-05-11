@@ -9,8 +9,8 @@
 - **資料庫**：PostgreSQL + PostGIS（Supabase 雲端）
 - **Migration**：Alembic
 - **排程**：APScheduler（AsyncIOScheduler）
-- **LLM**：Anthropic Claude API
-- **外部 API**：CWA 中央氣象署開放資料
+- **LLM**：OpenRouter API（gpt-4o-mini）
+- **外部 API**：CWA 中央氣象署開放資料、RSS 新聞來源
 
 ## 本地開發
 
@@ -52,8 +52,9 @@ uv run alembic downgrade -1
 - 行政區查詢：根據座標查詢對應鄉鎮市區（全台 368 個行政區）
 - 淹水潛勢查詢：根據座標查詢 24 小時 200mm 情境下的淹水風險等級（全台 22 縣市）
 - 即時雨量監測：串接 CWA 自動雨量站 API（O-A0002-001），每 10 分鐘自動排程更新，支援 QPE 雷達格點與實體雨量站雙來源
-- 風險評估：結合雨量、地形、財產位置計算風險
-- 推播通知：風險達閾值時主動通知
+- 新聞監測：每小時抓取 RSS 新聞，透過 LLM 分類淹水相關新聞並抽取台灣地名，進行地理定位
+- 風險評估引擎：每 10 分鐘自動評估所有財產，綜合雨量、淹水潛勢等級、附近新聞訊號計算風險分數
+- 警報系統：風險達閾值（notice/warning/emergency）時自動寫入警報，支援查詢與已讀標記
 
 ## API 端點
 
@@ -67,6 +68,9 @@ uv run alembic downgrade -1
 | GET | /api/location/district | 根據座標查詢行政區 |
 | GET | /api/location/flood-risk | 根據座標查詢淹水潛勢等級 |
 | GET | /api/rainfall | 查詢座標附近即時雨量（QPE + 雨量站） |
+| GET | /api/alerts | 查詢使用者所有財產的警報列表 |
+| GET | /api/alerts/{id} | 查詢單一警報詳情（自動標記已讀） |
+| POST | /api/alerts/evaluate | 手動觸發風險評估 |
 | GET | /health/scheduler | 排程系統健康檢查 |
 
 ## 資料來源
@@ -75,6 +79,7 @@ uv run alembic downgrade -1
 - 淹水潛勢圖：經濟部水利署 24 小時 200mm 情境（22 縣市）
 - 即時雨量：CWA 自動雨量站（O-A0002-001）
 - QPE 雷達降雨估算：CWA（O-B0045-001）
+- 新聞來源：自由時報、聯合新聞網、Google 新聞（RSS）
 
 ## 專案結構
 
@@ -90,6 +95,7 @@ FF/
 │   │   ├── properties.py  # 財產 CRUD
 │   │   ├── location.py    # 行政區 & 淹水潛勢查詢
 │   │   ├── rainfall.py    # 雨量查詢
+│   │   ├── alerts.py      # 警報查詢
 │   │   └── test.py        # 測試 endpoints
 │   ├── models/            # SQLAlchemy ORM Models
 │   │   ├── property.py
@@ -103,7 +109,10 @@ FF/
 │   │   ├── alert.py
 │   │   └── rainfall.py
 │   └── services/
-│       └── cwa_service.py # CWA API 串接 & 雨量資料寫入
+│       ├── cwa_service.py  # CWA API 串接 & 雨量資料寫入
+│       ├── news_service.py # RSS 新聞抓取、LLM 分類、地名抽取
+│       ├── llm_service.py  # OpenRouter LLM 呼叫
+│       └── risk_engine.py  # 風險評估引擎 & 警報產生
 ├── scripts/               # 資料匯入腳本
 │   ├── import_districts.py
 │   ├── import_flood_risk.py
