@@ -96,7 +96,7 @@ def classify_news_batch(titles: list[str]) -> list[dict]:
     """批次分類新聞，一次送多則給 LLM"""
     client = get_llm_client()
 
-    numbered = "\n".join([f"{i+1}. {t}" for i, t in enumerate(titles)])
+    numbered = "\n".join([f"{i + 1}. {t}" for i, t in enumerate(titles)])
 
     prompt = f"""你是新聞分類助理。請判斷以下每則新聞標題是否描述「台灣當下正在發生的淹水或積水事件」。
 
@@ -135,7 +135,12 @@ severity 只能是：high、medium、low、none
     except Exception as e:
         logger.error(f"LLM 分類失敗：{e}")
         return [
-            {"id": i + 1, "is_flood_related": False, "severity": "none", "confidence": 0.0}
+            {
+                "id": i + 1,
+                "is_flood_related": False,
+                "severity": "none",
+                "confidence": 0.0,
+            }
             for i in range(len(titles))
         ]
 
@@ -171,7 +176,11 @@ async def classify_unclassified_news():
                 for j, row in enumerate(batch):
                     result_item = next(
                         (r for r in results if r["id"] == j + 1),
-                        {"is_flood_related": False, "severity": "none", "confidence": 0.0},
+                        {
+                            "is_flood_related": False,
+                            "severity": "none",
+                            "confidence": 0.0,
+                        },
                     )
 
                     await session.execute(
@@ -255,7 +264,9 @@ async def extract_locations_for_flood_news():
 
                 if not locations:
                     await session.execute(
-                        text("UPDATE news_articles SET locations = '[]' WHERE id = :id"),
+                        text(
+                            "UPDATE news_articles SET locations = '[]' WHERE id = :id"
+                        ),
                         {"id": row.id},
                     )
                     continue
@@ -284,7 +295,9 @@ async def extract_locations_for_flood_news():
                     )
                 else:
                     await session.execute(
-                        text("UPDATE news_articles SET locations = :locations WHERE id = :id"),
+                        text(
+                            "UPDATE news_articles SET locations = :locations WHERE id = :id"
+                        ),
                         {
                             "locations": json.dumps(locations, ensure_ascii=False),
                             "id": row.id,

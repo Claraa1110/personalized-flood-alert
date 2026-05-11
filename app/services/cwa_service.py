@@ -73,13 +73,25 @@ async def save_rainfall_observations(stations: list):
                 continue
 
             rainfall_elem = station.get("RainfallElement", {})
-            rainfall_now = parse_rainfall(rainfall_elem.get("Now", {}).get("Precipitation"))
-            rainfall_1hr = parse_rainfall(rainfall_elem.get("Past1hr", {}).get("Precipitation"))
-            rainfall_3hr = parse_rainfall(rainfall_elem.get("Past3hr", {}).get("Precipitation"))
-            rainfall_24hr = parse_rainfall(rainfall_elem.get("Past24hr", {}).get("Precipitation"))
+            rainfall_now = parse_rainfall(
+                rainfall_elem.get("Now", {}).get("Precipitation")
+            )
+            rainfall_1hr = parse_rainfall(
+                rainfall_elem.get("Past1hr", {}).get("Precipitation")
+            )
+            rainfall_3hr = parse_rainfall(
+                rainfall_elem.get("Past3hr", {}).get("Precipitation")
+            )
+            rainfall_24hr = parse_rainfall(
+                rainfall_elem.get("Past24hr", {}).get("Precipitation")
+            )
 
             obs_time_str = station.get("ObsTime", {}).get("DateTime", "")
-            observed_at = datetime.fromisoformat(obs_time_str).replace(tzinfo=None) if obs_time_str else datetime.now()
+            observed_at = (
+                datetime.fromisoformat(obs_time_str).replace(tzinfo=None)
+                if obs_time_str
+                else datetime.now()
+            )
 
             geo = station.get("GeoInfo", {})
 
@@ -141,7 +153,9 @@ async def get_qpe_rainfall(lat: float, lng: float) -> dict:
 
     try:
         url = "https://opendata.cwa.gov.tw/fileapi/v1/opendataapi/O-B0045-001"
-        async with httpx.AsyncClient(timeout=60, verify=False, follow_redirects=True) as client:
+        async with httpx.AsyncClient(
+            timeout=60, verify=False, follow_redirects=True
+        ) as client:
             response = await client.get(url, params={"Authorization": CWA_API_KEY})
             response.raise_for_status()
 

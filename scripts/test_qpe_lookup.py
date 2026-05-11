@@ -2,6 +2,7 @@
 Test QPE grid rainfall lookup by coordinate.
 Usage: PYTHONPATH=. uv run python scripts/test_qpe_lookup.py
 """
+
 import asyncio
 from app.services.cwa_service import get_qpe_rainfall
 

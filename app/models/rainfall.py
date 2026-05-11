@@ -13,7 +13,9 @@ class Rainfall(Base):
     source: Mapped[str] = mapped_column(String(20))
     latitude: Mapped[float]
     longitude: Mapped[float]
-    location: Mapped[Any] = mapped_column(Geography(geometry_type="POINT", srid=4326), nullable=True)
+    location: Mapped[Any] = mapped_column(
+        Geography(geometry_type="POINT", srid=4326), nullable=True
+    )
     rainfall_mm: Mapped[float]
     observed_at: Mapped[datetime]
     station_id: Mapped[Optional[str]] = mapped_column(String(20), nullable=True)
@@ -25,5 +27,7 @@ class Rainfall(Base):
     rainfall_24hr: Mapped[Optional[float]] = mapped_column(nullable=True)
 
     __table_args__ = (
-        Index("rainfall_observations_location_idx", "location", postgresql_using="gist"),
+        Index(
+            "rainfall_observations_location_idx", "location", postgresql_using="gist"
+        ),
     )

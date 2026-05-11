@@ -16,7 +16,9 @@ async def test_qpe():
         "Authorization": CWA_API_KEY,
     }
 
-    async with httpx.AsyncClient(timeout=60, verify=False, follow_redirects=True) as client:
+    async with httpx.AsyncClient(
+        timeout=60, verify=False, follow_redirects=True
+    ) as client:
         response = await client.get(url, params=params)
         print(f"Status: {response.status_code}")
         print(f"Content-Length: {len(response.content)} bytes")

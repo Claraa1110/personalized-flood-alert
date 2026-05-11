@@ -16,8 +16,6 @@ def get_llm_client():
 
 def extract_locations(title: str) -> list[str]:
     """從新聞標題抽取台灣地名"""
-    client = get_llm_client()
-
     prompt = f"""你是地名抽取助理。請從以下新聞標題中，抽取所有台灣的縣市或鄉鎮市區地名。
 
 回答規則：

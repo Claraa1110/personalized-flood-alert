@@ -47,8 +47,12 @@ def haversine(lat1: float, lon1: float, lat2: float, lon2: float) -> float:
     R = 6371
     dlat = math.radians(lat2 - lat1)
     dlon = math.radians(lon2 - lon1)
-    a = (math.sin(dlat / 2) ** 2
-         + math.cos(math.radians(lat1)) * math.cos(math.radians(lat2)) * math.sin(dlon / 2) ** 2)
+    a = (
+        math.sin(dlat / 2) ** 2
+        + math.cos(math.radians(lat1))
+        * math.cos(math.radians(lat2))
+        * math.sin(dlon / 2) ** 2
+    )
     return R * 2 * math.asin(math.sqrt(a))
 
 
@@ -60,6 +64,7 @@ def health():
 @app.get("/health/scheduler")
 def scheduler_health():
     from app.services.cwa_service import last_rainfall_update
+
     if last_rainfall_update is None:
         return {"status": "no_data", "minutes_since_last_update": None}
     minutes = (datetime.now() - last_rainfall_update).total_seconds() / 60
@@ -72,7 +77,9 @@ async def test_rainfall(lat: float = Query(...), lng: float = Query(...)):
     url = "https://opendata.cwa.gov.tw/api/v1/rest/datastore/O-A0002-001"
 
     async with httpx.AsyncClient(timeout=10, verify=False) as client:
-        resp = await client.get(url, params={"Authorization": api_key, "format": "JSON"})
+        resp = await client.get(
+            url, params={"Authorization": api_key, "format": "JSON"}
+        )
         resp.raise_for_status()
         data = resp.json()
 

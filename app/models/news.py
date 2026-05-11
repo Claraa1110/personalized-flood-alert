@@ -8,7 +8,7 @@ from app.database import Base
 
 
 class News(Base):
-    __tablename__ = 'news_articles'
+    __tablename__ = "news_articles"
 
     id: Mapped[UUID] = mapped_column(primary_key=True, default=uuid4)
     title: Mapped[str] = mapped_column(String(500))
@@ -19,5 +19,5 @@ class News(Base):
     locations: Mapped[Optional[list]] = mapped_column(JSON)
     severity: Mapped[Optional[str]] = mapped_column(String(20))
     location_geom: Mapped[Optional[Any]] = mapped_column(
-        Geography(geometry_type='POINT', srid=4326), nullable=True
+        Geography(geometry_type="POINT", srid=4326), nullable=True
     )

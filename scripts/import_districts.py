@@ -2,6 +2,7 @@
 Import Taiwan township boundaries from shapefile into the districts table.
 Usage: uv run python scripts/import_districts.py
 """
+
 import asyncio
 import os
 from pathlib import Path
@@ -18,8 +19,12 @@ load_dotenv()
 SHAPEFILE = Path(__file__).parent.parent / "data" / "TOWN_MOI_1140318.shp"
 
 _url = os.getenv("DATABASE_URL", "").replace("postgresql://", "postgresql+asyncpg://")
-engine = create_async_engine(_url, poolclass=NullPool, connect_args={"statement_cache_size": 0})
-AsyncSessionLocal = async_sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
+engine = create_async_engine(
+    _url, poolclass=NullPool, connect_args={"statement_cache_size": 0}
+)
+AsyncSessionLocal = async_sessionmaker(
+    engine, class_=AsyncSession, expire_on_commit=False
+)
 
 
 def to_multipolygon(geom) -> MultiPolygon:

@@ -95,7 +95,9 @@ async def evaluate_risk_for_property(property_row, db: AsyncSession) -> dict:
         news_severity=news_signal["severity"],
     )
     level = score_to_level(score)
-    print(f"  rainfall_1hr={rainfall_1hr}, flood_potential={flood_potential}, news={news_signal['severity']} → score={score}, level={level}")
+    print(
+        f"  rainfall_1hr={rainfall_1hr}, flood_potential={flood_potential}, news={news_signal['severity']} → score={score}, level={level}"
+    )
 
     return {
         "property_id": property_row.id,
@@ -107,7 +109,9 @@ async def evaluate_risk_for_property(property_row, db: AsyncSession) -> dict:
     }
 
 
-async def create_alert_if_needed(property_id, level: str, score: int, result: dict, db: AsyncSession):
+async def create_alert_if_needed(
+    property_id, level: str, score: int, result: dict, db: AsyncSession
+):
     """如果需要警報，寫進 alerts 表（防重複）"""
     if level == "safe":
         return
@@ -139,6 +143,7 @@ async def create_alert_if_needed(property_id, level: str, score: int, result: di
     )
 
     import json as _json
+
     await db.execute(
         text("""
             INSERT INTO alerts (id, property_id, level, message, triggered_by, created_at)
@@ -155,11 +160,13 @@ async def create_alert_if_needed(property_id, level: str, score: int, result: di
             "property_id": str(property_id),
             "level": level,
             "message": message,
-            "triggered_by": _json.dumps({
-                "score": score,
-                "rainfall_1hr": result["rainfall_1hr"],
-                "news_severity": result["news_severity"],
-            }),
+            "triggered_by": _json.dumps(
+                {
+                    "score": score,
+                    "rainfall_1hr": result["rainfall_1hr"],
+                    "news_severity": result["news_severity"],
+                }
+            ),
         },
     )
 
@@ -191,7 +198,9 @@ async def evaluate_all_properties():
                 level = result["level"]
 
                 if level != "safe":
-                    await create_alert_if_needed(prop.id, level, result["score"], result, db)
+                    await create_alert_if_needed(
+                        prop.id, level, result["score"], result, db
+                    )
                     alert_count += 1
                     logger.info(f"財產 {prop.name}：{level}（{result['score']} 分）")
 

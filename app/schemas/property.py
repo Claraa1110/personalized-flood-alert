@@ -6,7 +6,7 @@ from datetime import datetime
 
 class PropertyBase(BaseModel):
     name: str
-    type: Literal['house', 'car', 'warehouse', 'other']
+    type: Literal["house", "car", "warehouse", "other"]
     latitude: float = Field(ge=-90, le=90)
     longitude: float = Field(ge=-180, le=180)
     address: Optional[str] = None

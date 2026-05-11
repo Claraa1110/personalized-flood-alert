@@ -2,6 +2,7 @@
 Import all Taiwan county flood risk zones (24h 200mm scenario) into flood_risk_zones table.
 Usage: uv run python scripts/import_all_flood_risk.py
 """
+
 import asyncio
 import os
 
@@ -42,16 +43,25 @@ FLOOD_SHAPEFILES = [
 ]
 
 _url = os.getenv("DATABASE_URL", "").replace("postgresql://", "postgresql+asyncpg://")
-engine = create_async_engine(_url, poolclass=NullPool, connect_args={"statement_cache_size": 0})
-AsyncSessionLocal = async_sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
+engine = create_async_engine(
+    _url, poolclass=NullPool, connect_args={"statement_cache_size": 0}
+)
+AsyncSessionLocal = async_sessionmaker(
+    engine, class_=AsyncSession, expire_on_commit=False
+)
 
 
 NANTOU_TYPE_MAP = {
-    "0-0.3": 0, "0~0.3": 0,
-    "0.3-0.5": 1, "0.3~0.5": 1,
-    "0.5-1": 2, "0.5~1": 2,
-    "1-2": 3, "1~2": 3,
-    "2-3": 4, "2~3": 4,
+    "0-0.3": 0,
+    "0~0.3": 0,
+    "0.3-0.5": 1,
+    "0.3~0.5": 1,
+    "0.5-1": 2,
+    "0.5~1": 2,
+    "1-2": 3,
+    "1~2": 3,
+    "2-3": 4,
+    "2~3": 4,
     ">3": 4,
 }
 
@@ -73,6 +83,7 @@ def to_multipolygon(geom) -> MultiPolygon:
 
 def force_2d(geom):
     from shapely.ops import transform
+
     return transform(lambda x, y, z=None: (x, y), geom)
 
 

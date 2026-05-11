@@ -1,5 +1,4 @@
 import asyncio
-import json
 import uuid
 from app.services.news_service import extract_locations_for_flood_news
 from app.services.llm_service import extract_locations

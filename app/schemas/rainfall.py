@@ -8,7 +8,7 @@ class RainfallBase(BaseModel):
     longitude: float
     rainfall_mm: float
     observed_at: datetime
-    source: Literal['qpe_grid', 'station']
+    source: Literal["qpe_grid", "station"]
 
 
 class RainfallCreate(RainfallBase):

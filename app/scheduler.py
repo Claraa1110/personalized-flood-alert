@@ -13,14 +13,18 @@ scheduler = AsyncIOScheduler()
 async def cleanup_old_data():
     try:
         async with AsyncSessionLocal() as session:
-            await session.execute(text("""
+            await session.execute(
+                text("""
                 DELETE FROM rainfall_observations
                 WHERE observed_at < NOW() - INTERVAL '48 hours'
-            """))
-            await session.execute(text("""
+            """)
+            )
+            await session.execute(
+                text("""
                 DELETE FROM news_articles
                 WHERE published_at < NOW() - INTERVAL '7 days'
-            """))
+            """)
+            )
             await session.commit()
             logger.info("舊資料清理完成")
     except Exception as e:

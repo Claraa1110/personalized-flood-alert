@@ -2,6 +2,7 @@
 Import Taipei flood risk zones from shapefile into flood_risk_zones table.
 Usage: uv run python scripts/import_flood_risk.py
 """
+
 import asyncio
 import os
 from pathlib import Path
@@ -15,12 +16,22 @@ from sqlalchemy.pool import NullPool
 
 load_dotenv()
 
-SHAPEFILE = Path(__file__).parent.parent / "data" / "flood_taipei" / "SHP" / "tp_24h_r200_polygon_class_1.shp"
+SHAPEFILE = (
+    Path(__file__).parent.parent
+    / "data"
+    / "flood_taipei"
+    / "SHP"
+    / "tp_24h_r200_polygon_class_1.shp"
+)
 SCENARIO = "24h_200mm"
 
 _url = os.getenv("DATABASE_URL", "").replace("postgresql://", "postgresql+asyncpg://")
-engine = create_async_engine(_url, poolclass=NullPool, connect_args={"statement_cache_size": 0})
-AsyncSessionLocal = async_sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
+engine = create_async_engine(
+    _url, poolclass=NullPool, connect_args={"statement_cache_size": 0}
+)
+AsyncSessionLocal = async_sessionmaker(
+    engine, class_=AsyncSession, expire_on_commit=False
+)
 
 
 def to_multipolygon(geom) -> MultiPolygon:

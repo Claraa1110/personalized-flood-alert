@@ -76,7 +76,9 @@ async def get_alert_detail(
         raise HTTPException(status_code=404, detail="找不到這個警報")
 
     await db.execute(
-        text("UPDATE alerts SET read_at = NOW() WHERE id = :alert_id AND read_at IS NULL"),
+        text(
+            "UPDATE alerts SET read_at = NOW() WHERE id = :alert_id AND read_at IS NULL"
+        ),
         {"alert_id": str(alert_id)},
     )
     await db.commit()
@@ -97,5 +99,6 @@ async def get_alert_detail(
 async def trigger_evaluation():
     """手動觸發風險評估（測試用）"""
     from app.services.risk_engine import evaluate_all_properties
+
     await evaluate_all_properties()
     return {"message": "風險評估完成"}
