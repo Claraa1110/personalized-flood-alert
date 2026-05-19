@@ -7,7 +7,7 @@ from sqlalchemy import pool
 from alembic import context
 
 from app.database import Base
-from app.models import property, alert, rainfall, news, district, flood_risk, village  # noqa: F401
+from app.models import property, alert, rainfall, news, district, flood_risk, village, wra_threshold  # noqa: F401
 
 load_dotenv()
 
