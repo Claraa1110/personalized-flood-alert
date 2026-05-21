@@ -40,11 +40,11 @@ def parse_affected_areas(affected_area_str: str, district: str) -> list[dict]:
         if "-" in part:
             segments = part.split("-")
             current_district = segments[0].strip()
-            village = segments[1].strip() if len(segments) > 1 else ""
+            area = segments[1].strip() if len(segments) > 1 else ""
         else:
-            village = part.strip()
-        if village:
-            results.append({"district": current_district, "village": village})
+            area = part.strip()
+        if area and area.endswith("里"):
+            results.append({"district": current_district, "area_name": area})
 
     return results
 
@@ -60,27 +60,35 @@ async def save_thresholds(all_data: list):
                 county = item.get("City", {}).get("zh_TW", "")
                 district = item.get("Town", {}).get("zh_TW", "")
                 affected_area = item.get("AffectedArea", "")
-                villages = parse_affected_areas(affected_area, district)
+                areas = parse_affected_areas(affected_area, district)
 
-                for v in villages:
+                for v in areas:
                     await session.execute(
                         text("""
                             INSERT INTO wra_alert_thresholds
-                                (county_name, district_name, village_name,
+                                (county_name, district_name, area_name,
                                  threshold_1h_lv2, threshold_1h_lv1,
                                  threshold_3h_lv2, threshold_3h_lv1,
                                  threshold_6h_lv2, threshold_6h_lv1)
                             VALUES (
-                                :county, :district, :village,
+                                :county, :district, :area_name,
                                 :t1_lv2, :t1_lv1,
                                 :t3_lv2, :t3_lv1,
                                 :t6_lv2, :t6_lv1
                             )
+                            ON CONFLICT (county_name, district_name, area_name)
+                            DO UPDATE SET
+                                threshold_1h_lv2 = LEAST(wra_alert_thresholds.threshold_1h_lv2, EXCLUDED.threshold_1h_lv2),
+                                threshold_1h_lv1 = LEAST(wra_alert_thresholds.threshold_1h_lv1, EXCLUDED.threshold_1h_lv1),
+                                threshold_3h_lv2 = LEAST(wra_alert_thresholds.threshold_3h_lv2, EXCLUDED.threshold_3h_lv2),
+                                threshold_3h_lv1 = LEAST(wra_alert_thresholds.threshold_3h_lv1, EXCLUDED.threshold_3h_lv1),
+                                threshold_6h_lv2 = LEAST(wra_alert_thresholds.threshold_6h_lv2, EXCLUDED.threshold_6h_lv2),
+                                threshold_6h_lv1 = LEAST(wra_alert_thresholds.threshold_6h_lv1, EXCLUDED.threshold_6h_lv1)
                         """),
                         {
                             "county": county,
                             "district": v["district"],
-                            "village": v["village"],
+                            "area_name": v["area_name"],
                             "t1_lv2": item.get("AlertLevel2_H1"),
                             "t1_lv1": item.get("AlertLevel1_H1"),
                             "t3_lv2": item.get("AlertLevel2_H3"),
