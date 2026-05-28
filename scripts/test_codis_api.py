@@ -20,5 +20,5 @@ payload = {
 
 res = httpx.post(url, data=payload, timeout=30, verify=False, headers=HEADERS)
 print(f"Status: {res.status_code}")
-print(f"回傳前 1000 字：")
+print("回傳前 1000 字：")
 print(res.text[:1000])

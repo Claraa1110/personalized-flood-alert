@@ -43,7 +43,7 @@ def parse_affected_areas(affected_area_str: str, district: str) -> list[dict]:
             area = segments[1].strip() if len(segments) > 1 else ""
         else:
             area = part.strip()
-        if area and area.endswith("里"):
+        if area and (area.endswith("里") or area.endswith("村")):
             results.append({"district": current_district, "area_name": area})
 
     return results

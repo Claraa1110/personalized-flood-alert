@@ -14,8 +14,8 @@ async def main():
         result = await session.execute(text("""
             SELECT id, county_name, district_name, lat, lng, news_time
             FROM flood_events
-            WHERE rainfall_1h IS NULL
-            AND lat IS NOT NULL
+            WHERE lat IS NOT NULL
+            AND lng IS NOT NULL
             AND news_time IS NOT NULL
             ORDER BY id
         """))
@@ -36,7 +36,7 @@ async def main():
                 stations = await find_nearby_stations(event.lat, event.lng, radius_km=30, session=session)
 
         if not stations:
-            print(f"  找不到附近測站，跳過\n")
+            print("  找不到附近測站，跳過\n")
             continue
 
         station = stations[0]
@@ -46,7 +46,7 @@ async def main():
         hourly = download_hourly_rainfall(station['station_id'], start, event.news_time)
 
         if not hourly:
-            print(f"  CODIS 無資料，跳過\n")
+            print("  CODIS 無資料，跳過\n")
             continue
 
         rainfall = calculate_max_rainfall(hourly)

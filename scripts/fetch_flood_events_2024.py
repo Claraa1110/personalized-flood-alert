@@ -98,7 +98,7 @@ async def search_and_extract(query: str) -> list[dict]:
                 break
 
         if not content:
-            print(f"  沒有文字回應")
+            print("  沒有文字回應")
             return []
 
         text_clean = content.strip()

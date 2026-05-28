@@ -2,7 +2,6 @@ import re
 import httpx
 import math
 from datetime import datetime
-from typing import Optional
 
 
 def haversine(lat1: float, lng1: float, lat2: float, lng2: float) -> float:
@@ -94,9 +93,14 @@ def download_hourly_rainfall(station_id: str,
             precip = record.get('Precipitation', {})
             if precip:
                 rain = precip.get('Accumulation') or 0.0
+
+            # 過濾 CODIS 缺值代碼（通常是 -999 或更小的負數）
+            if rain < 0:
+                rain = 0.0
+
             result.append({
                 'time': record.get('DataTime'),
-                'rainfall_mm': float(rain) if rain else 0.0,
+                'rainfall_mm': float(rain),
             })
         return result
 
