@@ -42,7 +42,7 @@ async def main():
         station = stations[0]
         print(f"  測站：{station['station_name']}（{station['station_id']}）{station['distance_km']}km")
 
-        start = event.news_time - timedelta(hours=6)
+        start = event.news_time - timedelta(hours=12)
         hourly = download_hourly_rainfall(station['station_id'], start, event.news_time)
 
         if not hourly:
