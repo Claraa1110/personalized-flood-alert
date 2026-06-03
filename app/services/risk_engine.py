@@ -1,47 +1,11 @@
+import json as _json
 import logging
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 from app.database import AsyncSessionLocal
-from app.services.cwa_service import get_qpe_rainfall
+from app.services.threshold_service import get_applicable_threshold
 
 logger = logging.getLogger(__name__)
-
-
-def calculate_risk_score(
-    rainfall_1hr: float,
-    flood_potential: int,
-    news_severity: str,
-) -> int:
-    score = 0
-
-    if rainfall_1hr > 80:
-        score += 40
-    elif rainfall_1hr > 50:
-        score += 25
-    elif rainfall_1hr > 30:
-        score += 10
-
-    score += flood_potential * 5
-
-    if news_severity == "high":
-        score += 25
-    elif news_severity == "medium":
-        score += 15
-    elif news_severity == "low":
-        score += 5
-
-    return score
-
-
-def score_to_level(score: int) -> str:
-    if score >= 70:
-        return "emergency"
-    elif score >= 40:
-        return "warning"
-    elif score >= 20:
-        return "notice"
-    else:
-        return "safe"
 
 
 async def get_news_signal_near(lat: float, lng: float, db: AsyncSession) -> dict:
@@ -75,114 +39,17 @@ async def get_news_signal_near(lat: float, lng: float, db: AsyncSession) -> dict
     return {"severity": "none", "has_news": False}
 
 
-async def evaluate_risk_for_property(property_row, db: AsyncSession) -> dict:
-    """評估單一財產的風險"""
-    lat, lng = property_row.lat, property_row.lng
-
-    try:
-        rainfall_data = await get_qpe_rainfall(lat, lng)
-        rainfall_1hr = rainfall_data.get("rainfall_1hr", 0.0) or 0.0
-    except Exception as e:
-        logger.warning(f"雨量查詢失敗，使用 0：{e}")
-        rainfall_1hr = 0.0
-
-    flood_potential = property_row.flood_risk_level or 0
-    news_signal = await get_news_signal_near(lat, lng, db)
-
-    score = calculate_risk_score(
-        rainfall_1hr=rainfall_1hr,
-        flood_potential=flood_potential,
-        news_severity=news_signal["severity"],
-    )
-    level = score_to_level(score)
-    print(
-        f"  rainfall_1hr={rainfall_1hr}, flood_potential={flood_potential}, news={news_signal['severity']} → score={score}, level={level}"
-    )
-
-    return {
-        "property_id": property_row.id,
-        "score": score,
-        "level": level,
-        "rainfall_1hr": rainfall_1hr,
-        "flood_potential": flood_potential,
-        "news_severity": news_signal["severity"],
-    }
-
-
-async def create_alert_if_needed(
-    property_id, level: str, score: int, result: dict, db: AsyncSession
-):
-    """如果需要警報，寫進 alerts 表（防重複）"""
-    if level == "safe":
-        return
-
-    existing = await db.execute(
-        text("""
-            SELECT id FROM alerts
-            WHERE property_id = :pid
-            AND level = :level
-            AND created_at > NOW() - INTERVAL '6 hours'
-            LIMIT 1
-        """),
-        {"pid": property_id, "level": level},
-    )
-    if existing.fetchone():
-        return
-
-    level_text = {
-        "emergency": "緊急警報",
-        "warning": "淹水警戒",
-        "notice": "注意警示",
-    }
-    message = (
-        f"{level_text.get(level, level)}："
-        f"風險分數 {score} 分，"
-        f"1小時雨量 {result['rainfall_1hr']:.1f}mm，"
-        f"淹水潛勢等級 {result['flood_potential']}，"
-        f"新聞訊號 {result['news_severity']}"
-    )
-
-    import json as _json
-
-    await db.execute(
-        text("""
-            INSERT INTO alerts (id, property_id, level, message, triggered_by, created_at)
-            VALUES (
-                gen_random_uuid(),
-                :property_id,
-                :level,
-                :message,
-                CAST(:triggered_by AS jsonb),
-                NOW()
-            )
-        """),
-        {
-            "property_id": str(property_id),
-            "level": level,
-            "message": message,
-            "triggered_by": _json.dumps(
-                {
-                    "score": score,
-                    "rainfall_1hr": result["rainfall_1hr"],
-                    "news_severity": result["news_severity"],
-                }
-            ),
-        },
-    )
-
-
 async def evaluate_all_properties():
-    """排程用：遍歷所有財產，評估風險"""
-    async with AsyncSessionLocal() as db:
-        result = await db.execute(
-            text("""
-                SELECT id, name, location, flood_risk_level, user_id,
-                       ST_Y(location::geometry) AS lat,
-                       ST_X(location::geometry) AS lng
-                FROM properties
-                WHERE alert_enabled = true
-            """)
-        )
+    """排程用：遍歷所有財產，用校正後門檻評估風險"""
+    async with AsyncSessionLocal() as session:
+        result = await session.execute(text("""
+            SELECT id, name,
+                   ST_Y(location::geometry) AS lat,
+                   ST_X(location::geometry) AS lng
+            FROM properties
+            WHERE alert_enabled = true
+            AND location IS NOT NULL
+        """))
         properties = result.fetchall()
 
         if not properties:
@@ -194,20 +61,96 @@ async def evaluate_all_properties():
 
         for prop in properties:
             try:
-                result = await evaluate_risk_for_property(prop, db)
-                level = result["level"]
+                threshold = await get_applicable_threshold(prop.lat, prop.lng, session)
+                if not threshold:
+                    continue
 
-                if level != "safe":
-                    await create_alert_if_needed(
-                        prop.id, level, result["score"], result, db
+                t1h = threshold.get('threshold_1h')
+                t3h = threshold.get('threshold_3h')
+                t6h = threshold.get('threshold_6h')
+                source = threshold.get('source', 'original')
+
+                obs_result = await session.execute(text("""
+                    SELECT rainfall_1hr, rainfall_3hr
+                    FROM rainfall_observations
+                    WHERE ST_DWithin(
+                        location,
+                        ST_MakePoint(:lng, :lat)::geography,
+                        10000
                     )
-                    alert_count += 1
-                    logger.info(f"財產 {prop.name}：{level}（{result['score']} 分）")
+                    ORDER BY observed_at DESC
+                    LIMIT 1
+                """), {'lat': prop.lat, 'lng': prop.lng})
+                obs = obs_result.fetchone()
+                if not obs:
+                    continue
+
+                obs_6h_result = await session.execute(text("""
+                    SELECT COALESCE(SUM(rainfall_mm), 0) as rainfall_6hr
+                    FROM rainfall_observations
+                    WHERE ST_DWithin(
+                        location,
+                        ST_MakePoint(:lng, :lat)::geography,
+                        10000
+                    )
+                    AND observed_at >= NOW() - INTERVAL '6 hours'
+                """), {'lat': prop.lat, 'lng': prop.lng})
+                obs_6h = obs_6h_result.fetchone()
+                rainfall_6hr = obs_6h.rainfall_6hr if obs_6h else 0
+
+                print(f"財產 {prop.id}（{prop.name}）")
+                print(f"  門檻：1H={t1h}, 3H={t3h}, 6H={t6h}, 來源={source}")
+                print(f"  雨量：1H={obs.rainfall_1hr if obs else None}, 3H={obs.rainfall_3hr if obs else None}, 6H={rainfall_6hr}")
+
+                is_alert = False
+                triggered_scale = None
+
+                if t1h and obs.rainfall_1hr and obs.rainfall_1hr >= t1h:
+                    print(f"  → 觸發 1H 警報")
+                    is_alert = True
+                    triggered_scale = f'1H（{obs.rainfall_1hr}mm >= {t1h}mm）'
+                elif t3h and obs.rainfall_3hr and obs.rainfall_3hr >= t3h:
+                    print(f"  → 觸發 3H 警報")
+                    is_alert = True
+                    triggered_scale = f'3H（{obs.rainfall_3hr}mm >= {t3h}mm）'
+                elif t6h and rainfall_6hr and rainfall_6hr >= t6h:
+                    print(f"  → 觸發 6H 警報")
+                    is_alert = True
+                    triggered_scale = f'6H（{rainfall_6hr}mm >= {t6h}mm）'
+                else:
+                    print(f"  → 未觸發警報")
+
+                if is_alert:
+                    existing = await session.execute(text("""
+                        SELECT id FROM alerts
+                        WHERE property_id = :pid
+                        AND level = 'warning'
+                        AND created_at > NOW() - INTERVAL '6 hours'
+                        LIMIT 1
+                    """), {"pid": str(prop.id)})
+                    if not existing.fetchone():
+                        msg = f'雨量超過警戒門檻 {triggered_scale}（門檻來源：{source}）'
+                        await session.execute(text("""
+                            INSERT INTO alerts
+                                (id, property_id, level, message, triggered_by, created_at)
+                            VALUES (
+                                gen_random_uuid(), :pid, 'warning', :msg,
+                                CAST(:triggered_by AS jsonb), NOW()
+                            )
+                        """), {
+                            'pid': str(prop.id),
+                            'msg': msg,
+                            'triggered_by': _json.dumps({
+                                'triggered_scale': triggered_scale,
+                                'source': source,
+                            }),
+                        })
+                        alert_count += 1
+                        logger.info(f"財產 {prop.name}：超過門檻 {triggered_scale}")
 
             except Exception as e:
-                print(f"財產 {prop.name} 評估失敗：{e}")
                 logger.error(f"財產 {prop.name} 評估失敗：{e}")
                 continue
 
-        await db.commit()
+        await session.commit()
         logger.info(f"風險評估完成，觸發 {alert_count} 個警報")
