@@ -17,6 +17,7 @@ async def get_alerts(
         text("""
             SELECT
                 a.id,
+                a.property_id,
                 a.level,
                 a.message,
                 a.created_at,
@@ -37,6 +38,7 @@ async def get_alerts(
         "alerts": [
             {
                 "id": str(row.id),
+                "property_id": str(row.property_id),
                 "level": row.level,
                 "message": row.message,
                 "created_at": row.created_at.isoformat() if row.created_at else None,
@@ -93,6 +95,26 @@ async def get_alert_detail(
         "property_name": row.property_name,
         "property_address": row.property_address,
     }
+
+
+@router.post("/alerts/mark-all-read")
+async def mark_all_read(
+    db: AsyncSession = Depends(get_db),
+    x_test_user_id: str = Header(default="00000000-0000-0000-0000-000000000001"),
+):
+    """把該使用者所有未讀警報標記為已讀"""
+    await db.execute(
+        text("""
+            UPDATE alerts SET read_at = NOW()
+            WHERE read_at IS NULL
+            AND property_id IN (
+                SELECT id FROM properties WHERE user_id = :user_id
+            )
+        """),
+        {"user_id": x_test_user_id},
+    )
+    await db.commit()
+    return {"message": "已標記全部已讀"}
 
 
 @router.post("/alerts/evaluate")

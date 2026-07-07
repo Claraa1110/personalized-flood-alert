@@ -1,3 +1,4 @@
+import asyncio
 import os
 import math
 from contextlib import asynccontextmanager
@@ -12,6 +13,8 @@ from app.api.location import router as location_router
 from app.api.rainfall import router as rainfall_router
 from app.api.alerts import router as alerts_router
 from app.api.thresholds import router as thresholds_router
+from app.api.forecast import router as forecast_router
+from app.api.geocode import router as geocode_router
 from app.scheduler import setup_scheduler
 from app.services.cwa_service import fetch_rainfall_stations
 
@@ -24,11 +27,9 @@ async def lifespan(app: FastAPI):
     scheduler.start()
     print("排程系統啟動")
 
-    try:
-        await fetch_rainfall_stations()
-        print("初始雨量資料載入完成")
-    except Exception as e:
-        print(f"初始載入失敗（不影響服務）：{e}")
+    # 背景執行初始雨量載入，不阻塞 server 啟動
+    asyncio.create_task(fetch_rainfall_stations())
+    print("背景載入雨量資料中（不影響 API 回應）")
 
     yield
 
@@ -43,6 +44,8 @@ app.include_router(location_router, prefix="/api")
 app.include_router(rainfall_router, prefix="/api")
 app.include_router(alerts_router, prefix="/api")
 app.include_router(thresholds_router, prefix="/api")
+app.include_router(forecast_router, prefix="/api")
+app.include_router(geocode_router, prefix="/api")
 
 
 def haversine(lat1: float, lon1: float, lat2: float, lon2: float) -> float:

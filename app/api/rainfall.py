@@ -41,6 +41,39 @@ async def get_rainfall(
     if not station:
         raise HTTPException(status_code=404, detail="附近找不到雨量資料")
 
+    # Fetch hourly series for the nearest station (past 7 h, one row per hour)
+    hourly_result = await db.execute(
+        text("""
+            WITH ranked AS (
+                SELECT
+                    COALESCE(rainfall_1hr, rainfall_mm)::float AS mm,
+                    observed_at,
+                    DATE_TRUNC('hour', observed_at) AS bucket,
+                    ROW_NUMBER() OVER (
+                        PARTITION BY DATE_TRUNC('hour', observed_at)
+                        ORDER BY observed_at DESC
+                    ) AS rn
+                FROM rainfall_observations
+                WHERE station_name = :station_name
+                  AND observed_at >= NOW() - INTERVAL '7 hours'
+            )
+            SELECT mm, observed_at
+            FROM ranked
+            WHERE rn = 1
+            ORDER BY observed_at ASC
+        """),
+        {"station_name": station.station_name},
+    )
+    hourly_rows = hourly_result.fetchall()
+    hourly_series = [
+        {
+            "mm": float(row.mm or 0),
+            "observed_at": row.observed_at.isoformat(),
+        }
+        for row in hourly_rows
+        if row.observed_at is not None
+    ]
+
     return {
         "latitude": lat,
         "longitude": lng,
@@ -52,6 +85,7 @@ async def get_rainfall(
         "station_distance_km": round(station.dist_m / 1000, 2),
         "observed_at": station.observed_at.isoformat() if station.observed_at else None,
         "source": qpe_result.get("source", "station"),
+        "hourly_series": hourly_series,
     }
 
 

@@ -55,36 +55,47 @@ async def lookup_rainfall(db: AsyncSession, lat: float, lng: float):
 
 
 async def lookup_district_and_risk(db: AsyncSession, lat: float, lng: float):
-    district_result = await db.execute(
-        text("""
-            SELECT county_name, town_name
-            FROM districts
-            WHERE ST_Contains(geometry, ST_SetSRID(ST_MakePoint(:lng, :lat), 4326))
-            LIMIT 1
-        """),
-        {"lat": lat, "lng": lng},
-    )
-    district_row = district_result.fetchone()
-    district_name = (
-        f"{district_row.county_name}{district_row.town_name}" if district_row else None
-    )
+    district_name = None
+    flood_risk_level = 0
 
-    flood_result = await db.execute(
-        text("""
-            SELECT risk_level
-            FROM flood_risk_zones
-            WHERE scenario = '24h_200mm'
-              AND ST_Within(
-                ST_SetSRID(ST_MakePoint(:lng, :lat), 4326)::geometry,
-                geometry::geometry
-              )
-            ORDER BY risk_level DESC
-            LIMIT 1
-        """),
-        {"lat": lat, "lng": lng},
-    )
-    flood_row = flood_result.fetchone()
-    flood_risk_level = flood_row.risk_level if flood_row else 0
+    try:
+        async with db.begin_nested():
+            district_result = await db.execute(
+                text("""
+                    SELECT county_name, town_name
+                    FROM districts
+                    WHERE ST_Contains(geometry, ST_SetSRID(ST_MakePoint(:lng, :lat), 4326))
+                    LIMIT 1
+                """),
+                {"lat": lat, "lng": lng},
+            )
+            district_row = district_result.fetchone()
+            district_name = (
+                f"{district_row.county_name}{district_row.town_name}" if district_row else None
+            )
+    except Exception:
+        district_name = None
+
+    try:
+        async with db.begin_nested():
+            flood_result = await db.execute(
+                text("""
+                    SELECT risk_level
+                    FROM flood_risk_zones
+                    WHERE scenario = '24h_200mm'
+                      AND ST_Within(
+                        ST_SetSRID(ST_MakePoint(:lng, :lat), 4326)::geometry,
+                        geometry::geometry
+                      )
+                    ORDER BY risk_level DESC
+                    LIMIT 1
+                """),
+                {"lat": lat, "lng": lng},
+            )
+            flood_row = flood_result.fetchone()
+            flood_risk_level = flood_row.risk_level if flood_row else 0
+    except Exception:
+        flood_risk_level = 0
 
     return district_name, flood_risk_level
 

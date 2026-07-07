@@ -65,6 +65,13 @@ async def main():
             corrected_3h = round(min(valid_3h), 1) if valid_3h else original_3h
             corrected_6h = round(min(valid_6h), 1) if valid_6h else original_6h
 
+            # 若校正後不符合 1H ≤ 3H ≤ 6H，該時距放棄校正，沿用 WRA 原始門檻
+            if corrected_6h < corrected_3h:
+                corrected_6h = original_6h
+
+            if corrected_3h < corrected_1h:
+                corrected_3h = original_3h
+
             # 計算 1H 調降幅度
             rate_1h = round(
                 (original_1h - corrected_1h) / original_1h * 100, 1
