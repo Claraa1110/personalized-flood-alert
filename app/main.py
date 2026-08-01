@@ -15,6 +15,8 @@ from app.api.alerts import router as alerts_router
 from app.api.thresholds import router as thresholds_router
 from app.api.forecast import router as forecast_router
 from app.api.geocode import router as geocode_router
+from app.api.me import router as me_router
+from app.api.push_tokens import router as push_tokens_router
 from app.scheduler import setup_scheduler
 from app.services.cwa_service import fetch_rainfall_stations
 
@@ -46,6 +48,8 @@ app.include_router(alerts_router, prefix="/api")
 app.include_router(thresholds_router, prefix="/api")
 app.include_router(forecast_router, prefix="/api")
 app.include_router(geocode_router, prefix="/api")
+app.include_router(me_router, prefix="/api")
+app.include_router(push_tokens_router, prefix="/api")
 
 
 def haversine(lat1: float, lon1: float, lat2: float, lon2: float) -> float:

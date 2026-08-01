@@ -7,6 +7,7 @@ import {
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import MapView, { Region } from 'react-native-maps';
+import { apiFetch } from '../lib/api';
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -39,8 +40,6 @@ const PIN_HEIGHT = PIN_HEAD + PIN_TAIL;
 
 export default function AddPropertyScreen({ onComplete, onCancel }: Props) {
   const insets = useSafeAreaInsets();
-  const base = process.env.EXPO_PUBLIC_API_URL;
-
   // Form fields
   const [name, setName] = useState('');
   const [type, setType] = useState<PropertyType>('house');
@@ -79,7 +78,7 @@ export default function AddPropertyScreen({ onComplete, onCancel }: Props) {
     setGeocodeResult(null);
     setMapConfirmed(false);
     try {
-      const resp = await fetch(`${base}/api/geocode?address=${encodeURIComponent(q)}`);
+      const resp = await apiFetch(`/api/geocode?address=${encodeURIComponent(q)}`);
       const data = await resp.json();
       if (!resp.ok) throw new Error(data.detail ?? '地址查詢失敗');
       setGeocodeResult(data);
@@ -97,7 +96,7 @@ export default function AddPropertyScreen({ onComplete, onCancel }: Props) {
     setMapVisible(false);
     setReverseGeocoding(true);
     try {
-      const resp = await fetch(`${base}/api/reverse-geocode?lat=${mapLat}&lng=${mapLng}`);
+      const resp = await apiFetch(`/api/reverse-geocode?lat=${mapLat}&lng=${mapLng}`);
       const data = await resp.json();
       if (resp.ok) setMapAddress(data.formatted_address ?? null);
     } catch (_) {}
@@ -110,7 +109,7 @@ export default function AddPropertyScreen({ onComplete, onCancel }: Props) {
     setSubmitting(true);
     setFormError(null);
     try {
-      const resp = await fetch(`${base}/api/properties`, {
+      const resp = await apiFetch(`/api/properties`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({

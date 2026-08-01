@@ -5,6 +5,9 @@ import {
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { useFocusEffect } from '@react-navigation/native';
+import { apiFetch } from '../lib/api';
+
+// ─── Types ────────────────────────────────────────────────────────────────────
 
 interface Alert {
   id: string;
@@ -17,32 +20,71 @@ interface Alert {
 
 interface PropertyDetail {
   district_name: string | null;
-  latitude: number;
-  longitude: number;
+  type: string | null;
 }
 
 interface ParsedMessage {
   propertyName: string;
+  alertLevel: string;
   scale: string;
   actualMm: string;
   thresholdMm: string;
-  source: string;
 }
 
-// 【財產名稱】雨量超過警戒門檻 1H（68.0mm >= 45.0mm）（門檻來源：original）
-const MSG_RE = /【(.+?)】雨量超過警戒門檻\s+(\w+)（([\d.]+)mm\s*>=\s*([\d.]+)mm）（門檻來源：(\w+)）/;
+// ─── Constants ────────────────────────────────────────────────────────────────
+
+// 【財產名稱】達一級警戒 3H 雨量 52.5mm（已達警戒值 45.0mm）
+const MSG_RE = /【(.+?)】達(一級警戒|二級預警)\s+(\w+)\s+雨量\s+([\d.]+)mm（已達(?:警戒|預警)值\s+([\d.]+)mm）/;
+
+const SCALE_LABEL: Record<string, string> = {
+  '1H': '1 小時',
+  '3H': '3 小時',
+  '6H': '6 小時',
+};
+
+const ALERT_ADVICE: Record<string, Record<string, string>> = {
+  level1: {
+    house:     '緊急：一樓人員注意安全，切勿進入地下室',
+    car:       '緊急：立即移車，遠離低窪停車區',
+    warehouse: '緊急：關閉電源總開關，人員撤離',
+    other:     '緊急：遠離淹水區域，注意人身安全',
+  },
+  level2: {
+    house:     '貴重物品、家電移至高處，確認一樓門窗防水',
+    car:       '盡快將車輛移往高處停放',
+    warehouse: '墊高庫存，確認電源總開關位置',
+    other:     '重要物品移至高處，密切關注水情',
+  },
+};
+
+// ─── Helpers ──────────────────────────────────────────────────────────────────
 
 function parseMessage(msg: string): ParsedMessage | null {
   const m = msg.match(MSG_RE);
   if (!m) return null;
   return {
     propertyName: m[1],
-    scale: m[2],
-    actualMm: m[3],
-    thresholdMm: m[4],
-    source: m[5],
+    alertLevel: m[2],
+    scale: m[3],
+    actualMm: m[4],
+    thresholdMm: m[5],
   };
 }
+
+// DB 回傳無時區的 UTC 字串，補 'Z' 讓 JS 正確解讀為 UTC
+function parseUTC(isoStr: string): Date {
+  if (!isoStr.endsWith('Z') && !isoStr.includes('+')) return new Date(isoStr + 'Z');
+  return new Date(isoStr);
+}
+
+function formatTime(isoStr: string) {
+  return parseUTC(isoStr).toLocaleString('zh-TW', {
+    month: 'numeric', day: 'numeric',
+    hour: '2-digit', minute: '2-digit',
+  });
+}
+
+// ─── Component ────────────────────────────────────────────────────────────────
 
 export default function AlertScreen() {
   const [alerts, setAlerts] = useState<Alert[]>([]);
@@ -50,8 +92,7 @@ export default function AlertScreen() {
   const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [propDetails, setPropDetails] = useState<Record<string, PropertyDetail>>({});
-
-  const base = process.env.EXPO_PUBLIC_API_URL;
+  const [lastUpdatedMin, setLastUpdatedMin] = useState<number | null>(null);
 
   const fetchPropertyDetails = async (list: Alert[]) => {
     const uniqueIds = [...new Set(list.map((a) => a.property_id))];
@@ -59,13 +100,12 @@ export default function AlertScreen() {
     await Promise.all(
       uniqueIds.map(async (pid) => {
         try {
-          const resp = await fetch(`${base}/api/properties/${pid}`);
+          const resp = await apiFetch(`/api/properties/${pid}`);
           if (resp.ok) {
             const p = await resp.json();
             results[pid] = {
               district_name: p.district_name ?? null,
-              latitude: p.latitude,
-              longitude: p.longitude,
+              type: p.type ?? null,
             };
           }
         } catch { /* ignore */ }
@@ -76,13 +116,23 @@ export default function AlertScreen() {
 
   const fetchAlerts = async () => {
     try {
-      const resp = await fetch(`${base}/api/alerts`);
-      if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
-      const data = await resp.json();
-      const list: Alert[] = data.alerts ?? data;
-      setAlerts(list);
+      const [alertResp, schedulerResp] = await Promise.all([
+        apiFetch('/api/alerts'),
+        apiFetch('/health/scheduler'),
+      ]);
+
+      if (!alertResp.ok) throw new Error(`HTTP ${alertResp.status}`);
+      const data = await alertResp.json();
+      const all: Alert[] = data.alerts ?? data;
+
+      setAlerts(all);
       setError(null);
-      fetchPropertyDetails(list);
+      fetchPropertyDetails(all);
+
+      if (schedulerResp.ok) {
+        const sched = await schedulerResp.json();
+        setLastUpdatedMin(sched.minutes_since_last_update ?? null);
+      }
     } catch (e: any) {
       setError(e.message ?? '無法載入警報');
     } finally {
@@ -94,36 +144,12 @@ export default function AlertScreen() {
   useEffect(() => { fetchAlerts(); }, []);
 
   useFocusEffect(useCallback(() => {
-    fetch(`${base}/api/alerts/mark-all-read`, { method: 'POST' }).catch(() => {});
+    apiFetch('/api/alerts/mark-all-read', { method: 'POST' }).catch(() => {});
   }, []));
 
   const onRefresh = () => { setRefreshing(true); fetchAlerts(); };
 
-  const formatTime = (isoStr: string) => {
-    const d = new Date(isoStr);
-    return d.toLocaleString('zh-TW', {
-      month: 'numeric', day: 'numeric',
-      hour: '2-digit', minute: '2-digit',
-    });
-  };
-
-  const levelColor = (level: string) => {
-    if (level === 'warning') return '#C00000';
-    if (level === 'notice') return '#E67E22';
-    return '#2E75B6';
-  };
-
-  const levelIcon = (level: string): React.ComponentProps<typeof Ionicons>['name'] => {
-    if (level === 'warning') return 'warning';
-    if (level === 'notice') return 'megaphone';
-    return 'information-circle';
-  };
-
-  const levelText = (level: string) => {
-    if (level === 'warning') return '警告';
-    if (level === 'notice') return '注意';
-    return '通知';
-  };
+  // ── States ───────────────────────────────────────────────────────────────────
 
   if (loading) {
     return (
@@ -145,18 +171,40 @@ export default function AlertScreen() {
     );
   }
 
+  const updateLabel = lastUpdatedMin === null
+    ? null
+    : lastUpdatedMin < 1
+      ? '剛剛更新'
+      : `${Math.round(lastUpdatedMin)} 分鐘前更新`;
+
   if (alerts.length === 0) {
     return (
-      <View style={styles.center}>
-        <Ionicons name="shield-checkmark-outline" size={56} color="#ccc" />
-        <Text style={styles.emptyText}>目前無警報</Text>
-        <Text style={styles.emptySubtext}>所有財產雨量正常</Text>
+      <View style={styles.container}>
+        {updateLabel && (
+          <View style={styles.updateBar}>
+            <Ionicons name="time-outline" size={13} color="#aaa" />
+            <Text style={styles.updateText}>雨量資料 {updateLabel}</Text>
+          </View>
+        )}
+        <View style={styles.center}>
+          <Ionicons name="shield-checkmark-outline" size={56} color="#ccc" />
+          <Text style={styles.emptyText}>尚無警報記錄</Text>
+          <Text style={styles.emptySubtext}>所有財產雨量正常</Text>
+        </View>
       </View>
     );
   }
 
+  // ── Render ────────────────────────────────────────────────────────────────────
+
   return (
     <View style={styles.container}>
+      {updateLabel && (
+        <View style={styles.updateBar}>
+          <Ionicons name="time-outline" size={13} color="#aaa" />
+          <Text style={styles.updateText}>雨量資料 {updateLabel}</Text>
+        </View>
+      )}
       <FlatList
         data={alerts}
         keyExtractor={(item) => item.id}
@@ -165,66 +213,63 @@ export default function AlertScreen() {
         renderItem={({ item }) => {
           const parsed = parseMessage(item.message);
           const prop = propDetails[item.property_id];
-          const color = levelColor(item.level);
+          const typeKey = prop?.type ?? 'other';
+          const isLevel1 = item.level === 'level1';
+          const accentColor = isLevel1 ? '#C00000' : '#E67E22';
+          const levelLabel = parsed?.alertLevel ?? (isLevel1 ? '一級警戒' : '二級預警');
+          const scaleLabel = parsed ? (SCALE_LABEL[parsed.scale] ?? parsed.scale) : '';
+          const levelKey = isLevel1 ? 'level1' : 'level2';
+          const adviceSet = ALERT_ADVICE[levelKey];
+          const advice = adviceSet[typeKey] ?? adviceSet.other;
+          const adviceBg = isLevel1 ? '#FFF0F0' : '#FFF5EC';
+          const adviceBorder = isLevel1 ? '#FFCCCC' : '#FFDDB8';
+          const adviceTextColor = isLevel1 ? '#8B0000' : '#7D4000';
 
           return (
-            <View style={[styles.card, { borderLeftColor: color }]}>
+            <View style={[styles.card, { borderLeftColor: accentColor }]}>
+              {/* 未讀紅點 */}
               {!item.read_at && <View style={styles.unreadDot} />}
 
-              {/* 頂列：等級 + 時間 */}
+              {/* 頂列：等級 + 財產名稱 / 時間 */}
               <View style={styles.cardTop}>
-                <View style={[styles.levelBadge, { backgroundColor: color + '18' }]}>
-                  <Ionicons name={levelIcon(item.level)} size={13} color={color} />
-                  <Text style={[styles.levelText, { color }]}>{levelText(item.level)}</Text>
+                <View style={styles.titleRow}>
+                  <Ionicons name="warning" size={15} color={accentColor} />
+                  <Text style={[styles.levelLabel, { color: accentColor }]}>
+                    {levelLabel}
+                  </Text>
+                  <Text style={styles.dot}>·</Text>
+                  <Text style={styles.propName} numberOfLines={1}>
+                    {parsed?.propertyName ?? '—'}
+                  </Text>
                 </View>
                 <Text style={styles.timeText}>{formatTime(item.created_at)}</Text>
               </View>
 
-              {/* 財產名稱 */}
-              <Text style={styles.propName}>
-                {parsed?.propertyName ?? '—'}
-              </Text>
-
-              {/* 縣市地區 */}
+              {/* 地區 */}
               <View style={styles.districtRow}>
-                <Ionicons name="location-outline" size={13} color="#999" />
+                <Text style={styles.districtPin}>📍</Text>
                 <Text style={styles.districtText}>
                   {prop ? (prop.district_name ?? '無地區資料') : '—'}
                 </Text>
               </View>
 
-              <View style={styles.divider} />
-
-              {/* 雨量資訊 */}
-              {parsed ? (
-                <View style={styles.rainfallSection}>
-                  <View style={styles.rainfallRow}>
-                    <View style={styles.scaleBadge}>
-                      <Text style={styles.scaleText}>{parsed.scale}</Text>
-                    </View>
-                    <Text style={styles.rainfallMain}>
-                      雨量{' '}
-                      <Text style={[styles.rainfallValue, { color }]}>
-                        {parsed.actualMm} mm
-                      </Text>
-                    </Text>
-                    <Text style={styles.rainfallSub}>門檻 {parsed.thresholdMm} mm</Text>
-                  </View>
-                  <View style={[
-                    styles.sourceBadge,
-                    { backgroundColor: parsed.source === 'corrected' ? '#EBF3FB' : '#F5F5F5' },
-                  ]}>
-                    <Text style={[
-                      styles.sourceText,
-                      { color: parsed.source === 'corrected' ? '#2E75B6' : '#888' },
-                    ]}>
-                      {parsed.source === 'corrected' ? '校正後門檻' : 'WRA 原始門檻'}
-                    </Text>
-                  </View>
-                </View>
-              ) : (
-                <Text style={styles.rawMessage}>{item.message}</Text>
+              {/* 雨量自然語句 */}
+              {parsed && (
+                <Text style={styles.rainfallSentence}>
+                  <Text style={styles.rainfallScaleLabel}>{scaleLabel}</Text>
+                  {'累積雨量 '}
+                  <Text style={[styles.rainfallValue, { color: accentColor }]}>
+                    {parsed.actualMm} mm
+                  </Text>
+                  {isLevel1 ? '，已超過警戒值' : '，已超過預警值'}
+                </Text>
               )}
+
+              {/* 行動建議 */}
+              <View style={[styles.adviceBox, { backgroundColor: adviceBg, borderColor: adviceBorder }]}>
+                <Text style={styles.adviceIcon}>⚠️</Text>
+                <Text style={[styles.adviceText, { color: adviceTextColor }]}>{advice}</Text>
+              </View>
             </View>
           );
         }}
@@ -233,49 +278,18 @@ export default function AlertScreen() {
   );
 }
 
+// ─── Styles ───────────────────────────────────────────────────────────────────
+
 const styles = StyleSheet.create({
-  container: {
-    flex: 1,
-    backgroundColor: '#F0F4F8',
-  },
-  listContent: {
-    padding: 16,
-    gap: 12,
-    paddingBottom: 32,
-  },
-  center: {
-    flex: 1,
-    justifyContent: 'center',
-    alignItems: 'center',
-    gap: 10,
-    backgroundColor: '#F0F4F8',
-  },
-  emptyText: {
-    fontSize: 18,
-    fontWeight: '600',
-    color: '#aaa',
-    marginTop: 8,
-  },
-  emptySubtext: {
-    fontSize: 14,
-    color: '#bbb',
-  },
-  errorText: {
-    color: '#C00000',
-    fontSize: 15,
-    marginTop: 8,
-  },
-  retryBtn: {
-    backgroundColor: '#2E75B6',
-    paddingHorizontal: 28,
-    paddingVertical: 10,
-    borderRadius: 20,
-    marginTop: 4,
-  },
-  retryText: {
-    color: '#fff',
-    fontWeight: '600',
-  },
+  container: { flex: 1, backgroundColor: '#F0F4F8' },
+  listContent: { padding: 16, gap: 12, paddingBottom: 32 },
+  center: { flex: 1, justifyContent: 'center', alignItems: 'center', gap: 10, backgroundColor: '#F0F4F8' },
+  emptyText: { fontSize: 18, fontWeight: '600', color: '#aaa', marginTop: 8 },
+  emptySubtext: { fontSize: 14, color: '#bbb' },
+  errorText: { color: '#C00000', fontSize: 15, marginTop: 8 },
+  retryBtn: { backgroundColor: '#2E75B6', paddingHorizontal: 28, paddingVertical: 10, borderRadius: 20, marginTop: 4 },
+  retryText: { color: '#fff', fontWeight: '600' },
+
   card: {
     backgroundColor: '#fff',
     borderRadius: 16,
@@ -286,104 +300,57 @@ const styles = StyleSheet.create({
     shadowOpacity: 0.07,
     shadowRadius: 6,
     elevation: 3,
+    gap: 8,
   },
   unreadDot: {
-    position: 'absolute',
-    top: 14,
-    right: 14,
-    width: 8,
-    height: 8,
-    borderRadius: 4,
+    position: 'absolute', top: 14, right: 14,
+    width: 8, height: 8, borderRadius: 4,
     backgroundColor: '#C00000',
   },
+
   cardTop: {
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
-    marginBottom: 10,
   },
-  levelBadge: {
+  titleRow: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 4,
-    paddingHorizontal: 10,
-    paddingVertical: 4,
-    borderRadius: 20,
-  },
-  levelText: {
-    fontSize: 12,
-    fontWeight: '700',
-  },
-  timeText: {
-    color: '#aaa',
-    fontSize: 12,
-  },
-  propName: {
-    fontSize: 18,
-    fontWeight: '700',
-    color: '#1A1A2E',
-    marginBottom: 4,
-  },
-  districtRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 4,
-    marginBottom: 12,
-  },
-  districtText: {
-    fontSize: 13,
-    color: '#888',
-  },
-  divider: {
-    height: 1,
-    backgroundColor: '#F0F0F0',
-    marginBottom: 12,
-  },
-  rainfallSection: {
-    gap: 8,
-  },
-  rainfallRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 10,
-  },
-  scaleBadge: {
-    backgroundColor: '#1A1A2E',
-    paddingHorizontal: 10,
-    paddingVertical: 4,
-    borderRadius: 8,
-  },
-  scaleText: {
-    color: '#fff',
-    fontWeight: '700',
-    fontSize: 13,
-  },
-  rainfallMain: {
-    fontSize: 14,
-    color: '#444',
+    gap: 5,
     flex: 1,
+    marginRight: 12,
   },
-  rainfallValue: {
-    fontWeight: '700',
-    fontSize: 15,
+  levelLabel: { fontSize: 13, fontWeight: '700' },
+  dot: { fontSize: 13, color: '#ccc' },
+  propName: { fontSize: 15, fontWeight: '700', color: '#1A1A2E', flex: 1 },
+  timeText: { fontSize: 12, color: '#aaa', flexShrink: 0 },
+
+  districtRow: { flexDirection: 'row', alignItems: 'center', gap: 4 },
+  districtPin: { fontSize: 13 },
+  districtText: { fontSize: 13, color: '#666' },
+
+  rainfallSentence: { fontSize: 14, color: '#444', lineHeight: 20 },
+  rainfallScaleLabel: { fontWeight: '600', color: '#333' },
+  rainfallValue: { fontWeight: '700', fontSize: 15 },
+
+  adviceBox: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    gap: 8,
+    backgroundColor: '#FFF0F0',
+    borderRadius: 10,
+    padding: 10,
+    borderWidth: 1,
+    borderColor: '#FFCCCC',
+    marginTop: 2,
   },
-  rainfallSub: {
-    fontSize: 13,
-    color: '#888',
+  adviceIcon: { fontSize: 14, lineHeight: 20 },
+  adviceText: { fontSize: 13, color: '#8B0000', lineHeight: 19, flex: 1, fontWeight: '500' },
+
+  updateBar: {
+    flexDirection: 'row', alignItems: 'center', gap: 5,
+    paddingHorizontal: 16, paddingVertical: 8,
+    backgroundColor: '#fff', borderBottomWidth: 1, borderBottomColor: '#EAEAEA',
   },
-  sourceBadge: {
-    alignSelf: 'flex-start',
-    paddingHorizontal: 10,
-    paddingVertical: 4,
-    borderRadius: 8,
-  },
-  sourceText: {
-    fontSize: 12,
-    fontWeight: '600',
-  },
-  rawMessage: {
-    fontSize: 13,
-    color: '#666',
-    lineHeight: 18,
-  },
+  updateText: { fontSize: 12, color: '#aaa' },
 });

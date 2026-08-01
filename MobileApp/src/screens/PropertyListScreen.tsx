@@ -8,6 +8,7 @@ import { useFocusEffect } from '@react-navigation/native';
 import { Ionicons } from '@expo/vector-icons';
 import MapView, { Region } from 'react-native-maps';
 import AddPropertyScreen from './AddPropertyScreen';
+import { apiFetch } from '../lib/api';
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -26,13 +27,18 @@ interface Property {
 }
 
 interface Threshold {
-  threshold_1h: number | null;
-  threshold_3h: number | null;
-  threshold_6h: number | null;
-  source: string;
+  district_name: string;
+  level: 'safe' | 'level2' | 'level1';
+  level2_source: string;
+  thresholds: {
+    level1: { '1h': number | null; '3h': number | null; '6h': number | null };
+    level2: { '1h': number | null; '3h': number | null; '6h': number | null };
+  };
+  current_rainfall: { '1h': number; '3h': number; '6h': number };
 }
 
 interface ActiveAlert {
+  level: 'level1' | 'level2';
   scale: string;
   actualMm: string;
   thresholdMm: string;
@@ -40,7 +46,7 @@ interface ActiveAlert {
 
 // ─── Constants ────────────────────────────────────────────────────────────────
 
-const MSG_RE = /【.+?】雨量超過警戒門檻\s+(\w+)（([\d.]+)mm\s*>=\s*([\d.]+)mm）/;
+const MSG_RE = /【.+?】達(?:一級警戒|二級預警)\s+(\w+)\s+雨量\s+([\d.]+)mm（已達(?:警戒|預警)值\s+([\d.]+)mm）/;
 
 const TYPE_ICONS: Record<string, string> = {
   house:     'home',
@@ -60,58 +66,56 @@ const PIN_HEIGHT = PIN_HEAD + PIN_TAIL;
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
-// null = 正常運行；填入數字陣列可讓前幾張卡循環顯示對應風險 % 來測試
-const DEBUG_PCT_CYCLE: (number | null)[] = [];
+// null = 正常運行；設定 'level2' 或 'level1' 可強制所有卡片顯示對應等級（測試用）
+const DEBUG_LEVEL: 'safe' | 'level2' | 'level1' | null = null;
 
-function parseAlert(message: string): ActiveAlert | null {
+function parseAlert(message: string, level: string): ActiveAlert | null {
   const m = message.match(MSG_RE);
   if (!m) return null;
-  return { scale: m[1], actualMm: m[2], thresholdMm: m[3] };
+  return {
+    level: level === 'level1' ? 'level1' : 'level2',
+    scale: m[1],
+    actualMm: m[2],
+    thresholdMm: m[3],
+  };
 }
 
-function calcRiskPct(rainfall: number | null | undefined, threshold1h: number | null | undefined, idx = 0): number | null {
-  if (DEBUG_PCT_CYCLE.length > 0) return DEBUG_PCT_CYCLE[idx % DEBUG_PCT_CYCLE.length] ?? null;
-  if (rainfall == null || !threshold1h) return null;
-  return (rainfall / threshold1h) * 100;
+function getRiskDot(level: 'safe' | 'level2' | 'level1' | null) {
+  if (!level || level === 'safe') return { color: '#27AE60', label: '安全' };
+  if (level === 'level2') return { color: '#F1C40F', label: '注意' };
+  return { color: '#C00000', label: '警戒' };
 }
 
-function getRiskDot(pct: number | null) {
-  if (pct == null) return { color: '#D0D0D0', label: '-' };
-  if (pct >= 100) return { color: '#C00000', label: '高' };
-  if (pct >= 80)  return { color: '#E67E22', label: '中高' };
-  if (pct >= 50)  return { color: '#F1C40F', label: '中' };
-  return { color: '#27AE60', label: '低' };
-}
-
-// 行動建議對照表（等級 × 財產類型）
-const ADVICE_YELLOW = '留意天氣變化，確認排水孔暢通';
-const ADVICE: Record<'orange' | 'red', Record<string, string>> = {
-  orange: {
-    house:     '貴重物品、家電移至高處，確認一樓門窗防水',
-    car:       '盡快將車輛移往高處停放',
-    warehouse: '墊高庫存，確認電源總開關位置',
-    other:     '重要物品移至高處',
-  },
-  red: {
+// 行動建議對照表（警戒等級 × 財產類型）
+const ADVICE: Record<'level1' | 'level2', Record<string, string>> = {
+  level1: {
     house:     '緊急：一樓人員注意安全，切勿進入地下室',
     car:       '緊急：立即移車，遠離低窪停車區',
     warehouse: '緊急：關閉電源總開關，人員撤離',
     other:     '緊急：遠離淹水區域，注意人身安全',
   },
+  level2: {
+    house:     '貴重物品、家電移至高處，確認一樓門窗防水',
+    car:       '盡快將車輛移往高處停放',
+    warehouse: '墊高庫存，確認電源總開關位置',
+    other:     '重要物品移至高處，密切關注水情',
+  },
 };
 
-function getAdvice(pct: number | null, type: string): { text: string; bg: string; border: string; icon: string } | null {
-  if (pct == null || pct < 50) return null;
-  if (pct >= 100) return { text: ADVICE.red[type] ?? ADVICE.red.other, bg: '#FFF0F0', border: '#FFCCCC', icon: '⚠️' };
-  if (pct >= 80)  return { text: ADVICE.orange[type] ?? ADVICE.orange.other, bg: '#FFF5EC', border: '#FFDDB8', icon: '⚠️' };
-  return { text: ADVICE_YELLOW, bg: '#FFFBEA', border: '#FFE57F', icon: '💡' };
+function getAdvice(
+  level: 'safe' | 'level2' | 'level1' | null,
+  type: string,
+): { text: string; bg: string; border: string; icon: string; textColor: string } | null {
+  if (!level || level === 'safe') return null;
+  const set = ADVICE[level];
+  const text = set[type] ?? set.other;
+  if (level === 'level1') return { text, bg: '#FFF0F0', border: '#FFCCCC', icon: '⚠️', textColor: '#8B0000' };
+  return { text, bg: '#FFF5EC', border: '#FFDDB8', icon: '⚠️', textColor: '#7D4000' };
 }
 
 // ─── Component ────────────────────────────────────────────────────────────────
 
 export default function PropertyListScreen() {
-  const base = process.env.EXPO_PUBLIC_API_URL;
-
   const [properties, setProperties] = useState<Property[]>([]);
   const [listLoading, setListLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
@@ -137,7 +141,7 @@ export default function PropertyListScreen() {
   const fetchProperties = async () => {
     setListError(null);
     try {
-      const resp = await fetch(`${base}/api/properties`);
+      const resp = await apiFetch('/api/properties');
       if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
       const data: Property[] = await resp.json();
       setProperties(data);
@@ -146,7 +150,7 @@ export default function PropertyListScreen() {
       await Promise.all(
         data.map(async (p) => {
           try {
-            const tr = await fetch(`${base}/api/threshold?lat=${p.latitude}&lng=${p.longitude}`);
+            const tr = await apiFetch(`/api/threshold?lat=${p.latitude}&lng=${p.longitude}`);
             if (tr.ok) thresholdMap[p.id] = await tr.json();
           } catch (_) {}
         })
@@ -154,7 +158,7 @@ export default function PropertyListScreen() {
       setThresholds(thresholdMap);
 
       try {
-        const ar = await fetch(`${base}/api/alerts`);
+        const ar = await apiFetch('/api/alerts');
         if (ar.ok) {
           const alertData = await ar.json();
           const list: { property_id: string; message: string; created_at: string; level: string }[] =
@@ -162,10 +166,10 @@ export default function PropertyListScreen() {
           const alertMap: Record<string, ActiveAlert> = {};
           const sixHoursAgo = Date.now() - 6 * 60 * 60 * 1000;
           for (const a of list) {
-            if (a.level !== 'warning') continue;
-            if (new Date(a.created_at).getTime() < sixHoursAgo) continue;
+            if (a.level !== 'level1' && a.level !== 'level2') continue;
+            if (new Date(a.created_at + 'Z').getTime() < sixHoursAgo) continue;
             if (alertMap[a.property_id]) continue;
-            const parsed = parseAlert(a.message);
+            const parsed = parseAlert(a.message, a.level);
             if (parsed) alertMap[a.property_id] = parsed;
           }
           setActiveAlerts(alertMap);
@@ -201,7 +205,7 @@ export default function PropertyListScreen() {
     setEditSubmitting(true);
     setEditError(null);
     try {
-      const resp = await fetch(`${base}/api/properties/${editingProperty.id}`, {
+      const resp = await apiFetch(`/api/properties/${editingProperty.id}`, {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -241,7 +245,7 @@ export default function PropertyListScreen() {
     if (!editingProperty) return;
     setEditSubmitting(true);
     try {
-      const resp = await fetch(`${base}/api/properties/${editingProperty.id}`, { method: 'DELETE' });
+      const resp = await apiFetch(`/api/properties/${editingProperty.id}`, { method: 'DELETE' });
       if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
       setEditStep(0);
       setEditingProperty(null);
@@ -255,15 +259,15 @@ export default function PropertyListScreen() {
 
   // ── Render Item ───────────────────────────────────────────────────────────────
 
-  const renderProperty = ({ item, index }: { item: Property; index: number }) => {
+  const renderProperty = ({ item }: { item: Property }) => {
     const t = thresholds[item.id];
     const alert = activeAlerts[item.id];
     const hasAlert = !!alert;
     const typeKey = item.type ?? 'house';
     const iconName = TYPE_ICONS[typeKey] ?? 'cube';
-    const pct = calcRiskPct(item.rainfall_now_mm, t?.threshold_1h, index);
-    const risk = getRiskDot(pct);
-    const advice = getAdvice(pct, typeKey);
+    const level = DEBUG_LEVEL ?? (t?.level ?? 'safe');
+    const risk = getRiskDot(level);
+    const advice = getAdvice(level, typeKey);
 
     return (
       <TouchableOpacity
@@ -275,7 +279,7 @@ export default function PropertyListScreen() {
           <View style={styles.alertBanner}>
             <Ionicons name="warning" size={14} color="#fff" />
             <Text style={styles.alertBannerText}>
-              {alert.scale} 雨量 {alert.actualMm} mm　超過門檻 {alert.thresholdMm} mm
+              {alert.level === 'level1' ? '一級警戒' : '二級預警'}・{alert.scale} 雨量 {alert.actualMm}mm 超過門檻 {alert.thresholdMm}mm
             </Text>
           </View>
         )}
@@ -326,7 +330,7 @@ export default function PropertyListScreen() {
               <Text style={styles.adviceIcon}>{advice.icon}</Text>
               <View style={{ flex: 1 }}>
                 <Text style={styles.adviceLabel}>行動建議</Text>
-                <Text style={styles.adviceText}>{advice.text}</Text>
+                <Text style={[styles.adviceText, { color: advice.textColor }]}>{advice.text}</Text>
               </View>
             </View>
           ) : null}

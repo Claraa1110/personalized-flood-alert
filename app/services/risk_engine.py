@@ -3,7 +3,8 @@ import logging
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 from app.database import AsyncSessionLocal
-from app.services.threshold_service import get_applicable_threshold
+from app.services.threshold_service import get_two_tier_thresholds
+from app.push import send_push_notifications
 
 logger = logging.getLogger(__name__)
 
@@ -88,10 +89,10 @@ async def get_rainfall_for_location(lat: float, lng: float, db: AsyncSession) ->
 
 
 async def evaluate_all_properties():
-    """排程用：遍歷所有財產，用校正後門檻評估風險"""
+    """排程用：遍歷所有財產，依兩級門檻評估風險並發送警報"""
     async with AsyncSessionLocal() as session:
         result = await session.execute(text("""
-            SELECT id, name,
+            SELECT id, user_id, name, district_name,
                    ST_Y(location::geometry) AS lat,
                    ST_X(location::geometry) AS lng
             FROM properties
@@ -106,72 +107,110 @@ async def evaluate_all_properties():
 
         logger.info(f"開始評估 {len(properties)} 個財產的風險")
         alert_count = 0
+        pending_pushes: list[dict] = []  # 收集待推播，commit 後統一送
 
         for prop in properties:
             try:
-                threshold = await get_applicable_threshold(prop.lat, prop.lng, session)
-                if not threshold:
+                thresholds = await get_two_tier_thresholds(prop.lat, prop.lng, session)
+                if not thresholds:
                     continue
 
-                t1h = threshold.get('threshold_1h')
-                t3h = threshold.get('threshold_3h')
-                t6h = threshold.get('threshold_6h')
-                source = threshold.get('source', 'original')
+                t1 = thresholds['thresholds']['level1']
+                t2 = thresholds['thresholds']['level2']
+                level2_source = thresholds['level2_source']
 
                 rainfall = await get_rainfall_for_location(prop.lat, prop.lng, session)
-                rainfall_1hr = rainfall['rainfall_1hr']
-                rainfall_3hr = rainfall['rainfall_3hr']
-                rainfall_6hr = rainfall['rainfall_6hr']
+                r1h = rainfall['rainfall_1hr']
+                r3h = rainfall['rainfall_3hr']
+                r6h = rainfall['rainfall_6hr']
 
                 print(f"財產 {prop.id}（{prop.name}）")
-                print(f"  門檻：1H={t1h}, 3H={t3h}, 6H={t6h}, 來源={source}")
-                print(f"  雨量：1H={rainfall_1hr}, 3H={rainfall_3hr}, 6H={rainfall_6hr}")
+                print(f"  一級門檻：1H={t1['1h']}, 3H={t1['3h']}, 6H={t1['6h']}")
+                print(f"  二級門檻：1H={t2['1h']}, 3H={t2['3h']}, 6H={t2['6h']} (來源:{level2_source})")
+                print(f"  雨量：1H={r1h}, 3H={r3h}, 6H={r6h}")
 
-                is_alert = False
+                triggered_level = None
                 triggered_scale = None
+                triggered_actual = None
+                triggered_threshold = None
 
-                if t1h and rainfall_1hr and rainfall_1hr >= t1h:
-                    print(f"  → 觸發 1H 警報")
-                    is_alert = True
-                    triggered_scale = f'1H（{rainfall_1hr}mm >= {t1h}mm）'
-                elif t3h and rainfall_3hr and rainfall_3hr >= t3h:
-                    print(f"  → 觸發 3H 警報")
-                    is_alert = True
-                    triggered_scale = f'3H（{rainfall_3hr}mm >= {t3h}mm）'
-                elif t6h and rainfall_6hr and rainfall_6hr >= t6h:
-                    print(f"  → 觸發 6H 警報")
-                    is_alert = True
-                    triggered_scale = f'6H（{rainfall_6hr}mm >= {t6h}mm）'
-                else:
+                # 先查一級警戒（紅）
+                for scale, actual, thresh in [
+                    ('1H', r1h, t1['1h']),
+                    ('3H', r3h, t1['3h']),
+                    ('6H', r6h, t1['6h']),
+                ]:
+                    if thresh and actual and actual >= thresh:
+                        triggered_level = 'level1'
+                        triggered_scale = scale
+                        triggered_actual = actual
+                        triggered_threshold = thresh
+                        break
+
+                # 未達一級，再查二級預警（黃）
+                if not triggered_level:
+                    for scale, actual, thresh in [
+                        ('1H', r1h, t2['1h']),
+                        ('3H', r3h, t2['3h']),
+                        ('6H', r6h, t2['6h']),
+                    ]:
+                        if thresh and actual and actual >= thresh:
+                            triggered_level = 'level2'
+                            triggered_scale = scale
+                            triggered_actual = actual
+                            triggered_threshold = thresh
+                            break
+
+                if not triggered_level:
                     print(f"  → 未觸發警報")
+                    continue
 
-                if is_alert:
-                    existing = await session.execute(text("""
-                        SELECT id FROM alerts
-                        WHERE property_id = :pid
-                        AND level = 'warning'
-                        AND created_at > NOW() - INTERVAL '6 hours'
-                        LIMIT 1
-                    """), {"pid": str(prop.id)})
-                    if not existing.fetchone():
-                        msg = f'【{prop.name}】雨量超過警戒門檻 {triggered_scale}（門檻來源：{source}）'
-                        await session.execute(text("""
-                            INSERT INTO alerts
-                                (id, property_id, level, message, triggered_by, created_at)
-                            VALUES (
-                                gen_random_uuid(), :pid, 'warning', :msg,
-                                CAST(:triggered_by AS jsonb), NOW()
-                            )
-                        """), {
-                            'pid': str(prop.id),
-                            'msg': msg,
-                            'triggered_by': _json.dumps({
-                                'triggered_scale': triggered_scale,
-                                'source': source,
-                            }),
-                        })
-                        alert_count += 1
-                        logger.info(f"財產 {prop.name}：超過門檻 {triggered_scale}")
+                level_label = '一級警戒' if triggered_level == 'level1' else '二級預警'
+                threshold_label = '警戒值' if triggered_level == 'level1' else '預警值'
+                print(f"  → 觸發 {level_label}（{triggered_scale}）")
+
+                # 每個等級各自在 1 小時內不重複發送
+                existing = await session.execute(text("""
+                    SELECT id FROM alerts
+                    WHERE property_id = :pid
+                    AND level = :level
+                    AND created_at > NOW() - INTERVAL '1 hour'
+                    LIMIT 1
+                """), {'pid': str(prop.id), 'level': triggered_level})
+                if existing.fetchone():
+                    print(f"  → {level_label} 警報已在 1 小時內發送，跳過")
+                    continue
+
+                msg = (
+                    f'【{prop.name}】達{level_label} {triggered_scale} '
+                    f'雨量 {triggered_actual}mm（已達{threshold_label} {triggered_threshold}mm）'
+                )
+                await session.execute(text("""
+                    INSERT INTO alerts
+                        (id, property_id, level, message, triggered_by, created_at)
+                    VALUES (
+                        gen_random_uuid(), :pid, :level, :msg,
+                        CAST(:triggered_by AS jsonb), NOW()
+                    )
+                """), {
+                    'pid': str(prop.id),
+                    'level': triggered_level,
+                    'msg': msg,
+                    'triggered_by': _json.dumps({
+                        'scale': triggered_scale,
+                        'actual_mm': triggered_actual,
+                        'threshold_mm': triggered_threshold,
+                        'level2_source': level2_source,
+                    }),
+                })
+                alert_count += 1
+                logger.info(f"財產 {prop.name}：{level_label} 觸發（{triggered_scale}）")
+                pending_pushes.append({
+                    "user_id": str(prop.user_id),
+                    "level": triggered_level,
+                    "name": prop.name,
+                    "district": prop.district_name or "",
+                })
 
             except Exception as e:
                 logger.error(f"財產 {prop.name} 評估失敗：{e}")
@@ -179,3 +218,25 @@ async def evaluate_all_properties():
 
         await session.commit()
         logger.info(f"風險評估完成，觸發 {alert_count} 個警報")
+
+        # commit 後送推播（不影響警報記錄）
+        for push in pending_pushes:
+            try:
+                token_rows = await session.execute(
+                    text("SELECT push_token FROM push_tokens WHERE user_id = :uid"),
+                    {"uid": push["user_id"]},
+                )
+                tokens = [r.push_token for r in token_rows.fetchall()]
+                if not tokens:
+                    continue
+
+                if push["level"] == "level1":
+                    title = "🚨 一級警戒"
+                    body = f"{push['name']}（{push['district']}）達一級警戒，已可能積淹水"
+                else:
+                    title = "⚠️ 二級預警"
+                    body = f"{push['name']}（{push['district']}）達二級預警，3小時內可能淹水"
+
+                await send_push_notifications(tokens, title, body)
+            except Exception as e:
+                logger.warning(f"推播發送例外（{push['name']}）: {e}")

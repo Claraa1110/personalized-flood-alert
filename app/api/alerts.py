@@ -1,8 +1,9 @@
-from fastapi import APIRouter, Depends, Header, HTTPException
+from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import text
 from app.dependencies import get_db
 from uuid import UUID
+from app.auth import CurrentUser, get_current_user
 
 router = APIRouter()
 
@@ -10,7 +11,7 @@ router = APIRouter()
 @router.get("/alerts")
 async def get_alerts(
     db: AsyncSession = Depends(get_db),
-    x_test_user_id: str = Header(default="00000000-0000-0000-0000-000000000001"),
+    user: CurrentUser = Depends(get_current_user),
 ):
     """查詢使用者所有財產的警報列表"""
     result = await db.execute(
@@ -30,7 +31,7 @@ async def get_alerts(
             ORDER BY a.created_at DESC
             LIMIT 50
         """),
-        {"user_id": x_test_user_id},
+        {"user_id": user.user_id},
     )
     rows = result.fetchall()
     return {
@@ -56,7 +57,7 @@ async def get_alerts(
 async def get_alert_detail(
     alert_id: UUID,
     db: AsyncSession = Depends(get_db),
-    x_test_user_id: str = Header(default="00000000-0000-0000-0000-000000000001"),
+    user: CurrentUser = Depends(get_current_user),
 ):
     """查詢單一警報詳情"""
     result = await db.execute(
@@ -71,7 +72,7 @@ async def get_alert_detail(
             WHERE a.id = :alert_id
             AND p.user_id = :user_id
         """),
-        {"alert_id": str(alert_id), "user_id": x_test_user_id},
+        {"alert_id": str(alert_id), "user_id": user.user_id},
     )
     row = result.fetchone()
     if not row:
@@ -100,7 +101,7 @@ async def get_alert_detail(
 @router.post("/alerts/mark-all-read")
 async def mark_all_read(
     db: AsyncSession = Depends(get_db),
-    x_test_user_id: str = Header(default="00000000-0000-0000-0000-000000000001"),
+    user: CurrentUser = Depends(get_current_user),
 ):
     """把該使用者所有未讀警報標記為已讀"""
     await db.execute(
@@ -111,7 +112,7 @@ async def mark_all_read(
                 SELECT id FROM properties WHERE user_id = :user_id
             )
         """),
-        {"user_id": x_test_user_id},
+        {"user_id": user.user_id},
     )
     await db.commit()
     return {"message": "已標記全部已讀"}
