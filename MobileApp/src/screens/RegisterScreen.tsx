@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import {
   View, Text, TextInput, TouchableOpacity, StyleSheet,
-  ActivityIndicator, KeyboardAvoidingView, Platform, ScrollView,
+  ActivityIndicator, KeyboardAvoidingView, Platform, ScrollView, Image,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { supabase } from '../lib/supabase';
@@ -70,10 +70,12 @@ export default function RegisterScreen({ onGoLogin }: Props) {
     >
       <ScrollView contentContainerStyle={styles.scroll} keyboardShouldPersistTaps="handled">
         <View style={styles.logoArea}>
-          <View style={styles.logoCircle}>
-            <Ionicons name="person-add" size={36} color="#fff" />
-          </View>
-          <Text style={styles.appName}>建立帳號</Text>
+          <Image
+            source={require('../../assets/icon.png')}
+            style={styles.logoIcon}
+          />
+          <Text style={styles.appName}>水先知</Text>
+          <Text style={styles.tagline}>建立你的帳號</Text>
         </View>
 
         <View style={styles.card}>
@@ -143,14 +145,15 @@ const styles = StyleSheet.create({
   root:   { flex: 1, backgroundColor: '#F0F4F8' },
   scroll: { flexGrow: 1, justifyContent: 'center', padding: 24 },
 
-  logoArea:   { alignItems: 'center', marginBottom: 28 },
-  logoCircle: {
-    width: 72, height: 72, borderRadius: 36,
-    backgroundColor: '#2E75B6', alignItems: 'center', justifyContent: 'center',
-    shadowColor: '#2E75B6', shadowOffset: { width: 0, height: 6 },
-    shadowOpacity: 0.3, shadowRadius: 12, elevation: 8, marginBottom: 12,
+  logoArea: { alignItems: 'center', marginBottom: 28 },
+  logoIcon: {
+    width: 88, height: 88, borderRadius: 20,
+    marginBottom: 14,
+    shadowColor: '#000', shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.15, shadowRadius: 10, elevation: 6,
   },
   appName: { fontSize: 22, fontWeight: '800', color: '#1A1A2E' },
+  tagline: { fontSize: 13, color: '#888', marginTop: 3 },
 
   card: {
     backgroundColor: '#fff', borderRadius: 20, padding: 24,

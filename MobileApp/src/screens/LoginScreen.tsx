@@ -1,16 +1,17 @@
 import { useState } from 'react';
 import {
   View, Text, TextInput, TouchableOpacity, StyleSheet,
-  ActivityIndicator, KeyboardAvoidingView, Platform, ScrollView,
+  ActivityIndicator, KeyboardAvoidingView, Platform, ScrollView, Image,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { supabase } from '../lib/supabase';
 
 interface Props {
   onGoRegister: () => void;
+  onGoForgot: () => void;
 }
 
-export default function LoginScreen({ onGoRegister }: Props) {
+export default function LoginScreen({ onGoRegister, onGoForgot }: Props) {
   const [email, setEmail]       = useState('');
   const [password, setPassword] = useState('');
   const [showPw, setShowPw]     = useState(false);
@@ -37,10 +38,11 @@ export default function LoginScreen({ onGoRegister }: Props) {
       <ScrollView contentContainerStyle={styles.scroll} keyboardShouldPersistTaps="handled">
         {/* Logo area */}
         <View style={styles.logoArea}>
-          <View style={styles.logoCircle}>
-            <Ionicons name="shield-checkmark" size={40} color="#fff" />
-          </View>
-          <Text style={styles.appName}>淹水預警</Text>
+          <Image
+            source={require('../../assets/icon.png')}
+            style={styles.logoIcon}
+          />
+          <Text style={styles.appName}>水先知</Text>
           <Text style={styles.tagline}>守護你的財產安全</Text>
         </View>
 
@@ -88,6 +90,10 @@ export default function LoginScreen({ onGoRegister }: Props) {
               ? <ActivityIndicator color="#fff" />
               : <Text style={styles.btnText}>登入</Text>}
           </TouchableOpacity>
+
+          <TouchableOpacity style={styles.forgotRow} onPress={onGoForgot}>
+            <Text style={styles.forgotLink}>忘記密碼？</Text>
+          </TouchableOpacity>
         </View>
 
         <TouchableOpacity style={styles.switchRow} onPress={onGoRegister}>
@@ -104,11 +110,11 @@ const styles = StyleSheet.create({
   scroll: { flexGrow: 1, justifyContent: 'center', padding: 24 },
 
   logoArea: { alignItems: 'center', marginBottom: 32 },
-  logoCircle: {
-    width: 80, height: 80, borderRadius: 40,
-    backgroundColor: '#2E75B6', alignItems: 'center', justifyContent: 'center',
-    shadowColor: '#2E75B6', shadowOffset: { width: 0, height: 6 },
-    shadowOpacity: 0.35, shadowRadius: 12, elevation: 8, marginBottom: 14,
+  logoIcon: {
+    width: 88, height: 88, borderRadius: 20,
+    marginBottom: 14,
+    shadowColor: '#000', shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.15, shadowRadius: 10, elevation: 6,
   },
   appName:  { fontSize: 26, fontWeight: '800', color: '#1A1A2E' },
   tagline:  { fontSize: 14, color: '#888', marginTop: 4 },
@@ -147,6 +153,9 @@ const styles = StyleSheet.create({
     shadowOpacity: 0.3, shadowRadius: 8, elevation: 5,
   },
   btnText: { color: '#fff', fontSize: 16, fontWeight: '700' },
+
+  forgotRow: { alignItems: 'center', marginTop: 14 },
+  forgotLink: { fontSize: 13, color: '#2E75B6' },
 
   switchRow: { flexDirection: 'row', justifyContent: 'center', marginTop: 24, gap: 4 },
   switchText: { fontSize: 14, color: '#888' },

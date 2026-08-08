@@ -73,17 +73,15 @@ async def save_rainfall_observations(stations: list):
                 continue
 
             rainfall_elem = station.get("RainfallElement", {})
-            rainfall_now = parse_rainfall(
-                rainfall_elem.get("Now", {}).get("Precipitation")
-            )
+            # 直接使用氣象署算好的官方值，不自己計算滑動視窗
             rainfall_1hr = parse_rainfall(
                 rainfall_elem.get("Past1hr", {}).get("Precipitation")
             )
             rainfall_3hr = parse_rainfall(
                 rainfall_elem.get("Past3hr", {}).get("Precipitation")
             )
-            rainfall_24hr = parse_rainfall(
-                rainfall_elem.get("Past24hr", {}).get("Precipitation")
+            rainfall_6hr = parse_rainfall(
+                rainfall_elem.get("Past6hr", {}).get("Precipitation")
             )
 
             obs_time_str = station.get("ObsTime", {}).get("DateTime", "")
@@ -99,17 +97,16 @@ async def save_rainfall_observations(stations: list):
                 await session.execute(
                     text("""
                         INSERT INTO rainfall_observations
-                            (source, latitude, longitude, location, rainfall_mm,
-                             rainfall_1hr, rainfall_3hr, rainfall_24hr,
+                            (source, latitude, longitude, location,
+                             rainfall_1hr, rainfall_3hr, rainfall_6hr,
                              station_id, station_name, county_name, town_name, observed_at)
                         VALUES (
                             'station',
                             :lat, :lng,
                             ST_MakePoint(:lng, :lat)::geography,
-                            :rainfall_mm,
                             :rainfall_1hr,
                             :rainfall_3hr,
-                            :rainfall_24hr,
+                            :rainfall_6hr,
                             :station_id,
                             :station_name,
                             :county_name,
@@ -120,10 +117,9 @@ async def save_rainfall_observations(stations: list):
                     {
                         "lat": lat,
                         "lng": lng,
-                        "rainfall_mm": rainfall_now,
                         "rainfall_1hr": rainfall_1hr,
                         "rainfall_3hr": rainfall_3hr,
-                        "rainfall_24hr": rainfall_24hr,
+                        "rainfall_6hr": rainfall_6hr,
                         "station_id": station.get("StationId"),
                         "station_name": station.get("StationName"),
                         "county_name": geo.get("CountyName"),
@@ -147,7 +143,7 @@ async def get_qpe_rainfall(lat: float, lng: float) -> dict:
     row = round((lat - 20) / 0.0125)
 
     if not (0 <= col < 441 and 0 <= row < 561):
-        return {"rainfall_mm": 0.0, "source": "qpe", "note": "座標超出範圍"}
+        return {"rainfall_1hr": 0.0, "rainfall_3hr": 0.0, "rainfall_6hr": 0.0, "source": "qpe", "note": "座標超出範圍"}
 
     index = row * 441 + col
 
@@ -168,7 +164,9 @@ async def get_qpe_rainfall(lat: float, lng: float) -> dict:
         rainfall = max(0.0, float(values[index])) if index < len(values) else 0.0
 
         return {
-            "rainfall_mm": rainfall,
+            "rainfall_1hr": rainfall,
+            "rainfall_3hr": 0.0,
+            "rainfall_6hr": 0.0,
             "source": "qpe",
             "grid_index": index,
             "lat": lat,
@@ -185,12 +183,13 @@ async def get_nearest_station_rainfall(lat: float, lng: float) -> dict:
     async with AsyncSessionLocal() as session:
         result = await session.execute(
             text("""
-                SELECT rainfall_mm, rainfall_1hr, rainfall_3hr, rainfall_24hr,
+                SELECT rainfall_1hr, rainfall_3hr, rainfall_6hr,
                        station_name,
                        ST_Distance(location, ST_MakePoint(:lng, :lat)::geography) AS dist_m
                 FROM rainfall_observations
-                WHERE ST_DWithin(location, ST_MakePoint(:lng, :lat)::geography, 50000)
-                ORDER BY dist_m
+                WHERE observed_at >= NOW() - INTERVAL '2 hours'
+                  AND ST_DWithin(location, ST_MakePoint(:lng, :lat)::geography, 50000)
+                ORDER BY observed_at DESC, dist_m
                 LIMIT 1
             """),
             {"lat": lat, "lng": lng},
@@ -198,13 +197,12 @@ async def get_nearest_station_rainfall(lat: float, lng: float) -> dict:
         row = result.fetchone()
 
     if not row:
-        return {"rainfall_mm": 0.0, "source": "none"}
+        return {"rainfall_1hr": 0.0, "rainfall_3hr": 0.0, "rainfall_6hr": 0.0, "source": "none"}
 
     return {
-        "rainfall_mm": row.rainfall_mm,
-        "rainfall_1hr": row.rainfall_1hr,
-        "rainfall_3hr": row.rainfall_3hr,
-        "rainfall_24hr": row.rainfall_24hr,
+        "rainfall_1hr": float(row.rainfall_1hr or 0),
+        "rainfall_3hr": float(row.rainfall_3hr or 0),
+        "rainfall_6hr": float(row.rainfall_6hr or 0),
         "source": "station",
         "station_name": row.station_name,
         "dist_m": round(row.dist_m),

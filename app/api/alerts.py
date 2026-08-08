@@ -125,3 +125,72 @@ async def trigger_evaluation():
 
     await evaluate_all_properties()
     return {"message": "風險評估完成"}
+
+
+@router.post("/alerts/seed-test")
+async def seed_test_alerts(
+    db: AsyncSession = Depends(get_db),
+    user: CurrentUser = Depends(get_current_user),
+):
+    """插入測試警報（UI 測試用，不發 push）"""
+    import json as _json
+    from uuid import uuid4
+
+    # 取該使用者前 3 個財產
+    rows = (await db.execute(text("""
+        SELECT id, name FROM properties
+        WHERE user_id = :uid
+        ORDER BY created_at
+        LIMIT 3
+    """), {"uid": user.user_id})).fetchall()
+
+    if not rows:
+        return {"inserted": 0, "message": "沒有財產可以綁定"}
+
+    # 循環補足 3 個（財產不夠就重複第一個）
+    def pick(i):
+        return rows[i] if i < len(rows) else rows[0]
+
+    seeds = [
+        (pick(0), "level1", "3H", 68.5, 45.0, "一級警戒", "警戒值",  0),
+        (pick(1), "level2", "1H", 32.0, 25.0, "二級預警", "預警值", 25),
+        (pick(2), "level1", "6H", 102.0, 80.0, "一級警戒", "警戒值", 70),
+    ]
+
+    inserted = 0
+    for prop, level, scale, actual, thresh, level_label, thresh_label, mins_ago in seeds:
+        msg = f"【{prop.name}】達{level_label} {scale} 雨量 {actual}mm（已達{thresh_label} {thresh}mm）"
+        await db.execute(text("""
+            INSERT INTO alerts (id, property_id, level, message, triggered_by, created_at, read_at)
+            VALUES (
+                gen_random_uuid(), :pid, :level, :msg,
+                CAST(:tb AS jsonb),
+                NOW() - (:mins * INTERVAL '1 minute'),
+                NULL
+            )
+        """), {
+            "pid": str(prop.id),
+            "level": level,
+            "msg": msg,
+            "tb": _json.dumps({"scale": scale, "actual_mm": actual, "threshold_mm": thresh}),
+            "mins": mins_ago,
+        })
+        inserted += 1
+
+    await db.commit()
+    return {"inserted": inserted, "message": f"已插入 {inserted} 筆測試警報"}
+
+
+@router.delete("/alerts/seed-test")
+async def delete_test_alerts(
+    db: AsyncSession = Depends(get_db),
+    user: CurrentUser = Depends(get_current_user),
+):
+    """清除 seed-test 插入的測試警報"""
+    result = await db.execute(text("""
+        DELETE FROM alerts
+        WHERE property_id IN (SELECT id FROM properties WHERE user_id = :uid)
+        AND message ~ '雨量 (68\\.5|32\\.0|102\\.0)mm'
+    """), {"uid": user.user_id})
+    await db.commit()
+    return {"deleted": result.rowcount, "message": f"已清除 {result.rowcount} 筆測試警報"}

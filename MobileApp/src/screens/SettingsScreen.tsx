@@ -1,22 +1,93 @@
-import { View, Text, StyleSheet, TouchableOpacity, Alert } from 'react-native';
+import { useState, useEffect } from 'react';
+import { View, Text, StyleSheet, TouchableOpacity, Alert, Switch, ActivityIndicator, Linking } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { useAuth } from '../context/AuthContext';
+import { apiFetch } from '../lib/api';
 
 type IconName = React.ComponentProps<typeof Ionicons>['name'];
 
-interface SettingRow {
-  icon: IconName;
-  label: string;
+function PrefRow({
+  icon, label, value, onToggle, isLast = false, loading,
+}: {
+  icon: IconName; label: string; value: boolean;
+  onToggle: (v: boolean) => void; isLast?: boolean; loading: boolean;
+}) {
+  return (
+    <View style={[styles.row, !isLast && styles.rowDivider]}>
+      <View style={styles.rowLeft}>
+        <View style={styles.iconWrap}>
+          <Ionicons name={icon} size={17} color="#2E75B6" />
+        </View>
+        <Text style={styles.rowLabel}>{label}</Text>
+      </View>
+      {loading
+        ? <ActivityIndicator size="small" color="#2E75B6" />
+        : <Switch
+            value={value}
+            onValueChange={onToggle}
+            trackColor={{ false: '#E0E0E0', true: '#2E75B6' }}
+            thumbColor="#fff"
+          />
+      }
+    </View>
+  );
 }
 
-const PREF_ROWS: SettingRow[] = [
-  { icon: 'notifications-outline', label: '推播通知' },
-  { icon: 'volume-high-outline',   label: '警報音效' },
-  { icon: 'time-outline',          label: '靜音時段' },
-];
+function LinkRow({
+  icon, label, onPress, isLast = false,
+}: {
+  icon: IconName; label: string; onPress: () => void; isLast?: boolean;
+}) {
+  return (
+    <TouchableOpacity
+      style={[styles.row, !isLast && styles.rowDivider]}
+      onPress={onPress}
+      activeOpacity={0.7}
+    >
+      <View style={styles.rowLeft}>
+        <View style={styles.iconWrap}>
+          <Ionicons name={icon} size={17} color="#2E75B6" />
+        </View>
+        <Text style={styles.rowLabel}>{label}</Text>
+      </View>
+      <Ionicons name="chevron-forward" size={16} color="#ccc" />
+    </TouchableOpacity>
+  );
+}
 
 export default function SettingsScreen() {
   const { session, signOut } = useAuth();
+  const [notifyEnabled, setNotifyEnabled] = useState(true);
+  const [soundEnabled, setSoundEnabled] = useState(true);
+  const [loading, setLoading] = useState(true);
+  useEffect(() => {
+    apiFetch('/api/notification-settings')
+      .then(r => r.json())
+      .then(data => {
+        setNotifyEnabled(data.notify_enabled);
+        setSoundEnabled(data.sound_enabled);
+      })
+      .catch(() => {})
+      .finally(() => setLoading(false));
+  }, []);
+
+  const saveSettings = (notify: boolean, sound: boolean) => {
+    apiFetch('/api/notification-settings', {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ notify_enabled: notify, sound_enabled: sound }),
+    }).catch(() => {});
+  };
+
+  const handleNotifyToggle = (value: boolean) => {
+    setNotifyEnabled(value);
+    saveSettings(value, soundEnabled);
+  };
+
+  const handleSoundToggle = (value: boolean) => {
+    setSoundEnabled(value);
+    saveSettings(notifyEnabled, value);
+  };
 
   const handleSignOut = () => {
     Alert.alert('登出', '確定要登出嗎？', [
@@ -44,20 +115,32 @@ export default function SettingsScreen() {
       {/* 通知偏好 */}
       <Text style={[styles.sectionTitle, { marginTop: 20 }]}>通知偏好</Text>
       <View style={styles.card}>
-        {PREF_ROWS.map((row, index) => (
-          <View
-            key={row.label}
-            style={[styles.row, index < PREF_ROWS.length - 1 && styles.rowDivider]}
-          >
-            <View style={styles.rowLeft}>
-              <View style={styles.iconWrap}>
-                <Ionicons name={row.icon} size={17} color="#2E75B6" />
-              </View>
-              <Text style={styles.rowLabel}>{row.label}</Text>
-            </View>
-            <Text style={styles.devLabel}>開發中</Text>
-          </View>
-        ))}
+        <PrefRow
+          icon="notifications-outline"
+          label="推播通知"
+          value={notifyEnabled}
+          onToggle={handleNotifyToggle}
+          loading={loading}
+        />
+        <PrefRow
+          icon="volume-high-outline"
+          label="警報音效"
+          value={soundEnabled}
+          onToggle={handleSoundToggle}
+          isLast
+          loading={loading}
+        />
+      </View>
+
+      {/* 關於 */}
+      <Text style={[styles.sectionTitle, { marginTop: 20 }]}>關於</Text>
+      <View style={styles.card}>
+        <LinkRow
+          icon="document-text-outline"
+          label="隱私權政策"
+          onPress={() => Linking.openURL('https://ff-weathered-paper-9628.fly.dev/privacy')}
+          isLast
+        />
       </View>
 
       {/* 登出 */}
@@ -106,7 +189,6 @@ const styles = StyleSheet.create({
     backgroundColor: '#EBF3FB', alignItems: 'center', justifyContent: 'center',
   },
   rowLabel: { fontSize: 15, color: '#1A1A2E' },
-  devLabel: { fontSize: 13, color: '#C8C8C8' },
 
   signOutBtn: {
     flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 8,

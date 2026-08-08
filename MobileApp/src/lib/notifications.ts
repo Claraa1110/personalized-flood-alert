@@ -15,6 +15,28 @@ Notifications.setNotificationHandler({
   }),
 });
 
+export async function updateBadgeCount(): Promise<void> {
+  if (!Device.isDevice) return;
+  try {
+    const resp = await apiFetch('/api/alerts');
+    if (!resp.ok) return;
+    const data = await resp.json();
+    const list: any[] = data.alerts ?? data;
+    const sixHoursAgo = Date.now() - 6 * 60 * 60 * 1000;
+    const alertingProperties = new Set(
+      list
+        .filter(a =>
+          (a.level === 'level1' || a.level === 'level2') &&
+          new Date(a.created_at + 'Z').getTime() > sixHoursAgo &&
+          !a.is_read
+        )
+        .map((a: any) => a.property_id)
+        .filter(Boolean)
+    );
+    await Notifications.setBadgeCountAsync(alertingProperties.size);
+  } catch {}
+}
+
 export async function registerForPushNotifications(): Promise<void> {
   // 只在實體裝置執行
   if (!Device.isDevice) {
@@ -25,7 +47,7 @@ export async function registerForPushNotifications(): Promise<void> {
   // Android 需要先建 notification channel
   if (Platform.OS === 'android') {
     await Notifications.setNotificationChannelAsync('default', {
-      name: '淹水預警',
+      name: '水先知',
       importance: Notifications.AndroidImportance.MAX,
       vibrationPattern: [0, 250, 250, 250],
       lightColor: '#2E75B6',

@@ -1,5 +1,6 @@
 import { useState, useEffect, useCallback } from 'react';
-import { View, ActivityIndicator } from 'react-native';
+import { View, ActivityIndicator, AppState } from 'react-native';
+import * as Notifications from 'expo-notifications';
 import { NavigationContainer } from '@react-navigation/native';
 import { createBottomTabNavigator } from '@react-navigation/bottom-tabs';
 import { Ionicons } from '@expo/vector-icons';
@@ -9,9 +10,10 @@ import AlertScreen from '../screens/AlertScreen';
 import SettingsScreen from '../screens/SettingsScreen';
 import LoginScreen from '../screens/LoginScreen';
 import RegisterScreen from '../screens/RegisterScreen';
+import ForgotPasswordScreen from '../screens/ForgotPasswordScreen';
 import { AuthProvider, useAuth } from '../context/AuthContext';
 import { apiFetch } from '../lib/api';
-import { registerForPushNotifications } from '../lib/notifications';
+import { registerForPushNotifications, updateBadgeCount } from '../lib/notifications';
 
 const Tab = createBottomTabNavigator();
 
@@ -69,21 +71,34 @@ function MainTabs() {
 }
 
 function AuthStack() {
-  const [screen, setScreen] = useState<'login' | 'register'>('login');
-  return screen === 'login'
-    ? <LoginScreen onGoRegister={() => setScreen('register')} />
-    : <RegisterScreen onGoLogin={() => setScreen('login')} />;
+  const [screen, setScreen] = useState<'login' | 'register' | 'forgot'>('login');
+  if (screen === 'register') return <RegisterScreen onGoLogin={() => setScreen('login')} />;
+  if (screen === 'forgot')   return <ForgotPasswordScreen onGoLogin={() => setScreen('login')} />;
+  return <LoginScreen onGoRegister={() => setScreen('register')} onGoForgot={() => setScreen('forgot')} />;
 }
 
 function RootNavigator() {
   const { session, loading } = useAuth();
 
-  // 登入後自動取得並註冊推播 token
+  // 登入後：註冊推播 token + 更新 badge；登出後：清除 badge
   useEffect(() => {
     if (session) {
       registerForPushNotifications();
+      updateBadgeCount();
+    } else {
+      Notifications.setBadgeCountAsync(0);
     }
   }, [session?.user?.id]);
+
+  // App 從背景回到前景時更新 badge
+  useEffect(() => {
+    const sub = AppState.addEventListener('change', (state) => {
+      if (state === 'active' && session) {
+        updateBadgeCount();
+      }
+    });
+    return () => sub.remove();
+  }, [session]);
 
   if (loading) {
     return (

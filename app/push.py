@@ -10,16 +10,21 @@ async def send_push_notifications(
     tokens: list[str],
     title: str,
     body: str,
+    badge: int | None = None,
+    sound: str | None = "default",
 ) -> None:
     """對一批 Expo Push Token 發送推播，失敗不拋例外。"""
     valid = [t for t in tokens if t.startswith("ExponentPushToken[")]
     if not valid:
         return
 
-    messages = [
-        {"to": token, "title": title, "body": body, "sound": "default"}
-        for token in valid
-    ]
+    def make_msg(token: str) -> dict:
+        m: dict = {"to": token, "title": title, "body": body, "sound": sound}
+        if badge is not None:
+            m["badge"] = badge
+        return m
+
+    messages = [make_msg(token) for token in valid]
 
     try:
         async with httpx.AsyncClient(timeout=10) as client:

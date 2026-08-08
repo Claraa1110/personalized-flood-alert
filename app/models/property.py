@@ -21,6 +21,7 @@ class Property(Base):
     created_at: Mapped[datetime] = mapped_column(default=func.now())
     district_name: Mapped[Optional[str]] = mapped_column(String(100), nullable=True)
     flood_risk_level: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+    custom_type_name: Mapped[Optional[str]] = mapped_column(String(100), nullable=True)
 
     __table_args__ = (
         Index("properties_location_idx", "location", postgresql_using="gist"),

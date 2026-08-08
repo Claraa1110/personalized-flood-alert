@@ -2,40 +2,22 @@ import { useState, useCallback } from 'react';
 import {
   View, TouchableOpacity, Text, StyleSheet,
   ActivityIndicator, FlatList, RefreshControl,
-  Modal, TextInput, KeyboardAvoidingView, Platform, Alert,
+  Modal, TextInput, KeyboardAvoidingView, Platform, Alert, ScrollView,
 } from 'react-native';
 import { useFocusEffect } from '@react-navigation/native';
 import { Ionicons } from '@expo/vector-icons';
-import MapView, { Region } from 'react-native-maps';
 import AddPropertyScreen from './AddPropertyScreen';
+import TypeSelector from '../components/TypeSelector';
+import LocationTabPicker from '../components/LocationTabPicker';
 import { apiFetch } from '../lib/api';
+import { PropertyType, TYPE_ICONS, getAdvice } from '../lib/advice';
+import {
+  PropertyWithRisk,
+  getCachedProperties, isPropertyCacheFresh,
+  fetchPropertiesWithRisk, invalidatePropertyCache,
+} from '../lib/propertyCache';
 
 // ─── Types ────────────────────────────────────────────────────────────────────
-
-type PropertyType = 'house' | 'car' | 'warehouse' | 'other';
-
-interface Property {
-  id: string;
-  name: string;
-  type: PropertyType | null;
-  address: string | null;
-  latitude: number;
-  longitude: number;
-  district_name: string | null;
-  flood_risk_level: number | null;
-  rainfall_now_mm?: number | null;
-}
-
-interface Threshold {
-  district_name: string;
-  level: 'safe' | 'level2' | 'level1';
-  level2_source: string;
-  thresholds: {
-    level1: { '1h': number | null; '3h': number | null; '6h': number | null };
-    level2: { '1h': number | null; '3h': number | null; '6h': number | null };
-  };
-  current_rainfall: { '1h': number; '3h': number; '6h': number };
-}
 
 interface ActiveAlert {
   level: 'level1' | 'level2';
@@ -47,22 +29,6 @@ interface ActiveAlert {
 // ─── Constants ────────────────────────────────────────────────────────────────
 
 const MSG_RE = /【.+?】達(?:一級警戒|二級預警)\s+(\w+)\s+雨量\s+([\d.]+)mm（已達(?:警戒|預警)值\s+([\d.]+)mm）/;
-
-const TYPE_ICONS: Record<string, string> = {
-  house:     'home',
-  car:       'car',
-  warehouse: 'business',
-  other:     'cube',
-};
-
-const TAIWAN_CENTER: Region = {
-  latitude: 23.5, longitude: 121.0,
-  latitudeDelta: 5, longitudeDelta: 5,
-};
-
-const PIN_HEAD = 26;
-const PIN_TAIL = 14;
-const PIN_HEIGHT = PIN_HEAD + PIN_TAIL;
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -86,95 +52,71 @@ function getRiskDot(level: 'safe' | 'level2' | 'level1' | null) {
   return { color: '#C00000', label: '警戒' };
 }
 
-// 行動建議對照表（警戒等級 × 財產類型）
-const ADVICE: Record<'level1' | 'level2', Record<string, string>> = {
-  level1: {
-    house:     '緊急：一樓人員注意安全，切勿進入地下室',
-    car:       '緊急：立即移車，遠離低窪停車區',
-    warehouse: '緊急：關閉電源總開關，人員撤離',
-    other:     '緊急：遠離淹水區域，注意人身安全',
-  },
-  level2: {
-    house:     '貴重物品、家電移至高處，確認一樓門窗防水',
-    car:       '盡快將車輛移往高處停放',
-    warehouse: '墊高庫存，確認電源總開關位置',
-    other:     '重要物品移至高處，密切關注水情',
-  },
-};
-
-function getAdvice(
-  level: 'safe' | 'level2' | 'level1' | null,
-  type: string,
-): { text: string; bg: string; border: string; icon: string; textColor: string } | null {
-  if (!level || level === 'safe') return null;
-  const set = ADVICE[level];
-  const text = set[type] ?? set.other;
-  if (level === 'level1') return { text, bg: '#FFF0F0', border: '#FFCCCC', icon: '⚠️', textColor: '#8B0000' };
-  return { text, bg: '#FFF5EC', border: '#FFDDB8', icon: '⚠️', textColor: '#7D4000' };
-}
-
 // ─── Component ────────────────────────────────────────────────────────────────
 
 export default function PropertyListScreen() {
-  const [properties, setProperties] = useState<Property[]>([]);
-  const [listLoading, setListLoading] = useState(true);
+  const [properties, setProperties] = useState<PropertyWithRisk[]>(() => getCachedProperties());
+  const [listLoading, setListLoading] = useState(() => getCachedProperties().length === 0);
   const [refreshing, setRefreshing] = useState(false);
   const [listError, setListError] = useState<string | null>(null);
-  const [thresholds, setThresholds] = useState<Record<string, Threshold>>({});
   const [activeAlerts, setActiveAlerts] = useState<Record<string, ActiveAlert>>({});
 
   // Add modal
   const [addVisible, setAddVisible] = useState(false);
 
-  // Edit flow
-  const [editingProperty, setEditingProperty] = useState<Property | null>(null);
-  const [editStep, setEditStep] = useState<0 | 1 | 2>(0);
+  // Edit modal
+  const [editingProperty, setEditingProperty] = useState<PropertyWithRisk | null>(null);
+  const [editModalVisible, setEditModalVisible] = useState(false);
+  const [editName, setEditName] = useState('');
+  const [editType, setEditType] = useState<PropertyType>('house');
+  const [editCustomTypeName, setEditCustomTypeName] = useState('');
   const [editLat, setEditLat] = useState(0);
   const [editLng, setEditLng] = useState(0);
-  const [editName, setEditName] = useState('');
   const [editAddress, setEditAddress] = useState('');
   const [editSubmitting, setEditSubmitting] = useState(false);
   const [editError, setEditError] = useState<string | null>(null);
 
   // ── Data Fetching ────────────────────────────────────────────────────────────
 
-  const fetchProperties = async () => {
+  const fetchData = async (force = false) => {
+    // 快取命中：立即顯示快取資料，不顯示 spinner（module-level 函式規避 stale closure）
+    if (!force && isPropertyCacheFresh()) {
+      const cached = getCachedProperties();
+      if (cached.length > 0) setProperties(cached);
+      return;
+    }
+
+    // 完全無資料（第一次）才顯示全畫面 spinner
+    if (getCachedProperties().length === 0) setListLoading(true);
     setListError(null);
+
     try {
-      const resp = await apiFetch('/api/properties');
-      if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
-      const data: Property[] = await resp.json();
-      setProperties(data);
+      const [riskResult, alertResp] = await Promise.allSettled([
+        fetchPropertiesWithRisk(force),
+        apiFetch('/api/alerts'),
+      ]);
 
-      const thresholdMap: Record<string, Threshold> = {};
-      await Promise.all(
-        data.map(async (p) => {
-          try {
-            const tr = await apiFetch(`/api/threshold?lat=${p.latitude}&lng=${p.longitude}`);
-            if (tr.ok) thresholdMap[p.id] = await tr.json();
-          } catch (_) {}
-        })
-      );
-      setThresholds(thresholdMap);
+      if (riskResult.status === 'fulfilled') {
+        setProperties(riskResult.value);
+      } else {
+        throw new Error('無法載入財產');
+      }
 
-      try {
-        const ar = await apiFetch('/api/alerts');
-        if (ar.ok) {
-          const alertData = await ar.json();
-          const list: { property_id: string; message: string; created_at: string; level: string }[] =
-            alertData.alerts ?? alertData;
-          const alertMap: Record<string, ActiveAlert> = {};
-          const sixHoursAgo = Date.now() - 6 * 60 * 60 * 1000;
-          for (const a of list) {
-            if (a.level !== 'level1' && a.level !== 'level2') continue;
-            if (new Date(a.created_at + 'Z').getTime() < sixHoursAgo) continue;
-            if (alertMap[a.property_id]) continue;
-            const parsed = parseAlert(a.message, a.level);
-            if (parsed) alertMap[a.property_id] = parsed;
-          }
-          setActiveAlerts(alertMap);
+      if (alertResp.status === 'fulfilled' && alertResp.value.ok) {
+        const alertData = await alertResp.value.json();
+        const list: { property_id: string; message: string; created_at: string; level: string }[] =
+          alertData.alerts ?? alertData;
+        const alertMap: Record<string, ActiveAlert> = {};
+        const sixHoursAgo = Date.now() - 6 * 60 * 60 * 1000;
+        for (const a of list) {
+          if (a.level !== 'level1' && a.level !== 'level2') continue;
+          if (new Date(a.created_at + 'Z').getTime() < sixHoursAgo) continue;
+          if (alertMap[a.property_id]) continue;
+          const parsed = parseAlert(a.message, a.level);
+          if (parsed) alertMap[a.property_id] = parsed;
         }
-      } catch (_) {}
+        setActiveAlerts(alertMap);
+      }
     } catch (e: any) {
       setListError(e.message ?? '無法載入財產');
     } finally {
@@ -183,20 +125,29 @@ export default function PropertyListScreen() {
     }
   };
 
-  useFocusEffect(useCallback(() => { fetchProperties(); }, []));
+  useFocusEffect(useCallback(() => { fetchData(); }, []));
 
-  const onRefresh = () => { setRefreshing(true); fetchProperties(); };
+  const onRefresh = () => { setRefreshing(true); fetchData(true); };
 
   // ── Edit Handlers ────────────────────────────────────────────────────────────
 
-  const openEdit = (p: Property) => {
+  const openEdit = (p: PropertyWithRisk) => {
     setEditingProperty(p);
     setEditName(p.name);
+    const rawType = p.type as string;
+    const resolvedType = (rawType === 'other' ? 'warehouse' : rawType) as PropertyType ?? 'house';
+    setEditType(resolvedType);
+    setEditCustomTypeName(p.custom_type_name ?? '');
     setEditAddress(p.address ?? '');
     setEditLat(p.latitude);
     setEditLng(p.longitude);
     setEditError(null);
-    setEditStep(1);
+    setEditModalVisible(true);
+  };
+
+  const closeEdit = () => {
+    setEditModalVisible(false);
+    setEditingProperty(null);
   };
 
   const saveEdit = async () => {
@@ -213,16 +164,17 @@ export default function PropertyListScreen() {
           address: editAddress.trim() || null,
           latitude: editLat,
           longitude: editLng,
-          type: editingProperty.type ?? 'house',
+          type: editType,
+          custom_type_name: editType === 'custom' ? editCustomTypeName.trim() || null : null,
         }),
       });
       if (!resp.ok) {
         const err = await resp.json().catch(() => ({}));
         throw new Error((err as any).detail ?? `HTTP ${resp.status}`);
       }
-      setEditStep(0);
-      setEditingProperty(null);
-      fetchProperties();
+      closeEdit();
+      invalidatePropertyCache();
+      fetchData(true);
     } catch (e: any) {
       setEditError(e.message ?? '儲存失敗');
     } finally {
@@ -247,9 +199,9 @@ export default function PropertyListScreen() {
     try {
       const resp = await apiFetch(`/api/properties/${editingProperty.id}`, { method: 'DELETE' });
       if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
-      setEditStep(0);
-      setEditingProperty(null);
-      fetchProperties();
+      closeEdit();
+      invalidatePropertyCache();
+      fetchData(true);
     } catch (e: any) {
       setEditError(e.message ?? '刪除失敗');
     } finally {
@@ -259,13 +211,12 @@ export default function PropertyListScreen() {
 
   // ── Render Item ───────────────────────────────────────────────────────────────
 
-  const renderProperty = ({ item }: { item: Property }) => {
-    const t = thresholds[item.id];
-    const alert = activeAlerts[item.id];
-    const hasAlert = !!alert;
+  const renderProperty = ({ item }: { item: PropertyWithRisk }) => {
     const typeKey = item.type ?? 'house';
     const iconName = TYPE_ICONS[typeKey] ?? 'cube';
-    const level = DEBUG_LEVEL ?? (t?.level ?? 'safe');
+    const level = DEBUG_LEVEL ?? item.level;
+    const alert = activeAlerts[item.id];
+    const hasAlert = !!alert && level !== 'safe';
     const risk = getRiskDot(level);
     const advice = getAdvice(level, typeKey);
 
@@ -279,13 +230,12 @@ export default function PropertyListScreen() {
           <View style={styles.alertBanner}>
             <Ionicons name="warning" size={14} color="#fff" />
             <Text style={styles.alertBannerText}>
-              {alert.level === 'level1' ? '一級警戒' : '二級預警'}・{alert.scale} 雨量 {alert.actualMm}mm 超過門檻 {alert.thresholdMm}mm
+              {alert.level === 'level1' ? '警戒' : '注意'}
             </Text>
           </View>
         )}
         <View style={styles.cardContent}>
           <View style={styles.cardHeader}>
-            {/* Type icon */}
             <View style={hasAlert ? [styles.cardIconWrap, styles.cardIconWrapAlert] : styles.cardIconWrap}>
               <Ionicons name={iconName as any} size={18} color={hasAlert ? '#C00000' : '#2E75B6'} />
             </View>
@@ -299,7 +249,6 @@ export default function PropertyListScreen() {
               ) : null}
             </View>
 
-            {/* Risk color dot */}
             <View style={styles.riskDotWrap}>
               <View style={[styles.riskDot, { backgroundColor: risk.color }]} />
               <Text style={[styles.riskDotLabel, { color: risk.color }]}>{risk.label}</Text>
@@ -308,23 +257,15 @@ export default function PropertyListScreen() {
             <Ionicons name="chevron-forward" size={16} color="#ccc" />
           </View>
 
-          {/* Address + rainfall chip */}
           <View style={styles.addressRow}>
-            {item.address ? (
-              <>
-                <Ionicons name="location-outline" size={13} color="#999" />
-                <Text style={styles.cardAddress} numberOfLines={1}>{item.address}</Text>
-              </>
-            ) : null}
-            {item.rainfall_now_mm != null ? (
+            {item.rainfall['1h'] > 0 ? (
               <View style={styles.rainfallChip}>
                 <Ionicons name="rainy-outline" size={12} color="#2E75B6" />
-                <Text style={styles.rainfallChipText}>{item.rainfall_now_mm} mm</Text>
+                <Text style={styles.rainfallChipText}>{item.rainfall['1h']} mm</Text>
               </View>
             ) : null}
           </View>
 
-          {/* 行動建議（僅風險 ≥ 50% 顯示）*/}
           {advice ? (
             <View style={[styles.adviceBox, { backgroundColor: advice.bg, borderColor: advice.border }]}>
               <Text style={styles.adviceIcon}>{advice.icon}</Text>
@@ -349,7 +290,7 @@ export default function PropertyListScreen() {
         </View>
       ) : null}
 
-      {(listLoading && !refreshing) ? (
+      {(listLoading && properties.length === 0) ? (
         <View style={styles.center}>
           <ActivityIndicator size="large" color="#2E75B6" />
           <Text style={styles.loadingText}>載入中...</Text>
@@ -358,7 +299,7 @@ export default function PropertyListScreen() {
         <View style={styles.center}>
           <Ionicons name="cloud-offline-outline" size={48} color="#ccc" />
           <Text style={styles.errorText}>{listError}</Text>
-          <TouchableOpacity style={styles.retryBtn} onPress={fetchProperties}>
+          <TouchableOpacity style={styles.retryBtn} onPress={() => fetchData(true)}>
             <Text style={styles.retryBtnText}>重試</Text>
           </TouchableOpacity>
         </View>
@@ -385,17 +326,21 @@ export default function PropertyListScreen() {
       {/* ── AddPropertyScreen (full-screen modal) ── */}
       <Modal visible={addVisible} animationType="slide" onRequestClose={() => setAddVisible(false)}>
         <AddPropertyScreen
-          onComplete={() => { setAddVisible(false); fetchProperties(); }}
+          onComplete={() => {
+            setAddVisible(false);
+            invalidatePropertyCache();
+            fetchData(true);
+          }}
           onCancel={() => setAddVisible(false)}
         />
       </Modal>
 
-      {/* ── Edit：Step 1 表單 ── */}
+      {/* ── Edit Modal ── */}
       <Modal
-        visible={editStep === 1}
+        visible={editModalVisible}
         transparent
         animationType="slide"
-        onRequestClose={() => { setEditStep(0); setEditingProperty(null); }}
+        onRequestClose={closeEdit}
       >
         <KeyboardAvoidingView
           style={styles.modalOverlay}
@@ -404,88 +349,67 @@ export default function PropertyListScreen() {
           <View style={styles.modalBox}>
             <View style={styles.editHeader}>
               <Text style={styles.modalTitle}>編輯財產</Text>
-              <TouchableOpacity onPress={() => { setEditStep(0); setEditingProperty(null); }}>
+              <TouchableOpacity onPress={closeEdit}>
                 <Ionicons name="close" size={22} color="#888" />
               </TouchableOpacity>
             </View>
 
-            <Text style={styles.inputLabel}>財產名稱 *</Text>
-            <TextInput style={styles.input} value={editName} onChangeText={setEditName} autoFocus />
-            <Text style={styles.inputLabel}>地址（選填）</Text>
-            <TextInput style={styles.input} value={editAddress} onChangeText={setEditAddress} />
+            <ScrollView
+              showsVerticalScrollIndicator={false}
+              keyboardShouldPersistTaps="handled"
+            >
+              <Text style={styles.inputLabel}>財產名稱</Text>
+              <TextInput
+                style={styles.input}
+                value={editName}
+                onChangeText={setEditName}
+                autoFocus
+              />
 
-            <TouchableOpacity style={styles.relocateBtn} onPress={() => setEditStep(2)}>
-              <Ionicons name="map-outline" size={16} color="#2E75B6" />
-              <Text style={styles.relocateBtnText}>重新選擇位置</Text>
-              <Text style={styles.relocateCoord}>{editLat.toFixed(4)}, {editLng.toFixed(4)}</Text>
-            </TouchableOpacity>
+              <Text style={styles.inputLabel}>財產類型</Text>
+              <TypeSelector
+                value={editType}
+                onChange={setEditType}
+                customTypeName={editCustomTypeName}
+                onCustomTypeNameChange={setEditCustomTypeName}
+              />
 
-            {editError ? (
-              <View style={styles.formErrorBox}>
-                <Ionicons name="alert-circle-outline" size={14} color="#C00000" />
-                <Text style={styles.formErrorText}>{editError}</Text>
+              <Text style={styles.inputLabel}>財產位置</Text>
+              <LocationTabPicker
+                initialLat={editLat}
+                initialLng={editLng}
+                initialAddress={editAddress}
+                onLocationChange={(la, ln, addr) => {
+                  setEditLat(la);
+                  setEditLng(ln);
+                  setEditAddress(addr ?? '');
+                }}
+              />
+
+              {editError ? (
+                <View style={styles.formErrorBox}>
+                  <Ionicons name="alert-circle-outline" size={14} color="#C00000" />
+                  <Text style={styles.formErrorText}>{editError}</Text>
+                </View>
+              ) : null}
+
+              <View style={styles.modalBtns}>
+                <TouchableOpacity style={styles.deleteBtn} onPress={confirmDelete} disabled={editSubmitting}>
+                  <Ionicons name="trash-outline" size={18} color="#C00000" />
+                  <Text style={styles.deleteBtnText}>刪除</Text>
+                </TouchableOpacity>
+                <TouchableOpacity style={styles.confirmBtn} onPress={saveEdit} disabled={editSubmitting}>
+                  {editSubmitting ? <ActivityIndicator color="#fff" size="small" /> : (
+                    <>
+                      <Ionicons name="checkmark" size={18} color="#fff" />
+                      <Text style={styles.confirmBtnText}>儲存</Text>
+                    </>
+                  )}
+                </TouchableOpacity>
               </View>
-            ) : null}
-
-            <View style={styles.modalBtns}>
-              <TouchableOpacity style={styles.deleteBtn} onPress={confirmDelete} disabled={editSubmitting}>
-                <Ionicons name="trash-outline" size={18} color="#C00000" />
-                <Text style={styles.deleteBtnText}>刪除</Text>
-              </TouchableOpacity>
-              <TouchableOpacity style={styles.confirmBtn} onPress={saveEdit} disabled={editSubmitting}>
-                {editSubmitting ? <ActivityIndicator color="#fff" size="small" /> : (
-                  <>
-                    <Ionicons name="checkmark" size={18} color="#fff" />
-                    <Text style={styles.confirmBtnText}>儲存</Text>
-                  </>
-                )}
-              </TouchableOpacity>
-            </View>
+            </ScrollView>
           </View>
         </KeyboardAvoidingView>
-      </Modal>
-
-      {/* ── Edit：Step 2 地圖重新選點 ── */}
-      <Modal visible={editStep === 2} animationType="slide" onRequestClose={() => setEditStep(1)}>
-        <View style={styles.mapContainer}>
-          <MapView
-            style={styles.mapFull}
-            initialRegion={{
-              latitude: editLat || TAIWAN_CENTER.latitude,
-              longitude: editLng || TAIWAN_CENTER.longitude,
-              latitudeDelta: 0.05,
-              longitudeDelta: 0.05,
-            }}
-            onRegionChangeComplete={(region) => {
-              setEditLat(region.latitude);
-              setEditLng(region.longitude);
-            }}
-          />
-          <View style={StyleSheet.absoluteFillObject} pointerEvents="none">
-            <View style={styles.pin}>
-              <View style={styles.pinHead} />
-              <View style={styles.pinTail} />
-            </View>
-          </View>
-          <View style={styles.pickerBottom}>
-            <View style={styles.pickerCoordBox}>
-              <Ionicons name="location" size={16} color="#2E75B6" />
-              <Text style={styles.coordText}>
-                {editLat.toFixed(5)},  {editLng.toFixed(5)}
-              </Text>
-            </View>
-            <Text style={styles.pickerHint}>拖動地圖來選擇新位置</Text>
-            <View style={styles.pickerBtns}>
-              <TouchableOpacity style={styles.cancelBtn} onPress={() => setEditStep(1)}>
-                <Text style={styles.cancelBtnText}>返回</Text>
-              </TouchableOpacity>
-              <TouchableOpacity style={styles.confirmBtn} onPress={() => setEditStep(1)}>
-                <Ionicons name="checkmark" size={18} color="#fff" />
-                <Text style={styles.confirmBtnText}>確認位置</Text>
-              </TouchableOpacity>
-            </View>
-          </View>
-        </View>
       </Modal>
     </View>
   );
@@ -527,6 +451,7 @@ const styles = StyleSheet.create({
   cardName: { fontSize: 16, fontWeight: '700', color: '#1A1A2E' },
   cardNameAlert: { color: '#C00000' },
   cardDistrict: { fontSize: 12, color: '#888', marginTop: 1 },
+  customTypeTag: { fontSize: 11, color: '#2E75B6', fontWeight: '600', marginTop: 2 },
 
   riskDotWrap: { alignItems: 'center', gap: 3, justifyContent: 'center' },
   riskDot: { width: 12, height: 12, borderRadius: 6 },
@@ -555,52 +480,26 @@ const styles = StyleSheet.create({
     shadowColor: '#2E75B6', shadowOffset: { width: 0, height: 4 }, shadowOpacity: 0.4, shadowRadius: 8, elevation: 8,
   },
 
-  mapContainer: { flex: 1 },
-  mapFull: { flex: 1 },
-  pin: {
-    position: 'absolute', top: '50%', left: '50%',
-    marginLeft: -(PIN_HEAD / 2), marginTop: -PIN_HEIGHT, alignItems: 'center',
-  },
-  pinHead: {
-    width: PIN_HEAD, height: PIN_HEAD, borderRadius: PIN_HEAD / 2,
-    backgroundColor: '#C00000', borderWidth: 2.5, borderColor: '#fff',
-    shadowColor: '#000', shadowOffset: { width: 0, height: 2 }, shadowOpacity: 0.35, shadowRadius: 4, elevation: 5,
-  },
-  pinTail: { width: 3, height: PIN_TAIL, backgroundColor: '#C00000' },
-  pickerBottom: {
-    backgroundColor: '#fff', paddingHorizontal: 20, paddingTop: 16, paddingBottom: 36, gap: 10,
-    shadowColor: '#000', shadowOffset: { width: 0, height: -3 }, shadowOpacity: 0.08, shadowRadius: 8, elevation: 10,
-  },
-  pickerCoordBox: {
-    flexDirection: 'row', alignItems: 'center', justifyContent: 'center',
-    gap: 6, backgroundColor: '#EBF3FB', paddingVertical: 8, borderRadius: 10,
-  },
-  coordText: { fontSize: 14, color: '#2E75B6', fontWeight: '600' },
-  pickerHint: { textAlign: 'center', fontSize: 12, color: '#aaa' },
-  pickerBtns: { flexDirection: 'row', gap: 12, marginTop: 4 },
-
   modalOverlay: { flex: 1, backgroundColor: 'rgba(0,0,0,0.5)', justifyContent: 'center', paddingHorizontal: 24 },
   modalBox: {
-    backgroundColor: '#fff', borderRadius: 20, padding: 24,
+    backgroundColor: '#fff', borderRadius: 24,
+    padding: 24, paddingBottom: 32, maxHeight: '85%',
     shadowColor: '#000', shadowOffset: { width: 0, height: 8 }, shadowOpacity: 0.15, shadowRadius: 16, elevation: 12,
   },
-  modalTitle: { fontSize: 20, fontWeight: '700', color: '#1A1A2E', textAlign: 'center', marginBottom: 10 },
-  editHeader: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 4 },
-  inputLabel: { fontSize: 13, color: '#555', fontWeight: '600', marginBottom: 6, marginTop: 12 },
+  modalTitle: { fontSize: 20, fontWeight: '700', color: '#1A1A2E' },
+  editHeader: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 16 },
+  inputLabel: { fontSize: 13, color: '#555', fontWeight: '600', marginBottom: 8, marginTop: 16 },
   input: {
     borderWidth: 1.5, borderColor: '#E0E0E0', borderRadius: 10,
     paddingHorizontal: 14, paddingVertical: 11, fontSize: 15, color: '#222', backgroundColor: '#FAFAFA',
   },
-  relocateBtn: { flexDirection: 'row', alignItems: 'center', gap: 8, backgroundColor: '#EBF3FB', borderRadius: 10, padding: 12, marginTop: 14 },
-  relocateBtnText: { fontSize: 14, color: '#2E75B6', fontWeight: '600', flex: 1 },
-  relocateCoord: { fontSize: 11, color: '#888' },
-  formErrorBox: { flexDirection: 'row', alignItems: 'center', gap: 6, marginTop: 10, backgroundColor: '#FFF0F0', padding: 10, borderRadius: 8 },
+  formErrorBox: { flexDirection: 'row', alignItems: 'center', gap: 6, marginTop: 12, backgroundColor: '#FFF0F0', padding: 10, borderRadius: 8 },
   formErrorText: { color: '#C00000', fontSize: 13, flex: 1 },
-  modalBtns: { flexDirection: 'row', gap: 12, marginTop: 20 },
+  modalBtns: { flexDirection: 'row', gap: 12, marginTop: 24 },
   cancelBtn: { flex: 1, paddingVertical: 13, borderRadius: 12, backgroundColor: '#F0F0F0', alignItems: 'center' },
   cancelBtnText: { fontSize: 15, color: '#666', fontWeight: '600' },
   confirmBtn: { flex: 2, paddingVertical: 13, borderRadius: 12, backgroundColor: '#2E75B6', alignItems: 'center', flexDirection: 'row', justifyContent: 'center', gap: 6 },
   confirmBtnText: { fontSize: 15, color: '#fff', fontWeight: '700' },
-  deleteBtn: { flex: 1, paddingVertical: 13, borderRadius: 12, backgroundColor: '#FFF0F0', alignItems: 'center', flexDirection: 'row', justifyContent: 'center', gap: 6, borderWidth: 1.5, borderColor: '#FCCCC' },
+  deleteBtn: { flex: 1, paddingVertical: 13, borderRadius: 12, backgroundColor: '#FFF0F0', alignItems: 'center', flexDirection: 'row', justifyContent: 'center', gap: 6, borderWidth: 1.5, borderColor: '#FFCCCC' },
   deleteBtnText: { fontSize: 15, color: '#C00000', fontWeight: '600' },
 });

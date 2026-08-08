@@ -6,12 +6,13 @@ from datetime import datetime
 
 class PropertyBase(BaseModel):
     name: str
-    type: Literal["house", "car", "warehouse", "other"]
+    type: Literal["house", "car", "shop", "warehouse", "farm", "custom", "other"]
     latitude: float = Field(ge=-90, le=90)
     longitude: float = Field(ge=-180, le=180)
     address: Optional[str] = None
     floor_level: Optional[int] = Field(default=1, ge=1)
     alert_enabled: bool = True
+    custom_type_name: Optional[str] = None
 
 
 class PropertyCreate(PropertyBase):
@@ -30,6 +31,7 @@ class PropertyResponse(BaseModel):
     longitude: float
     district_name: Optional[str] = None
     flood_risk_level: Optional[int] = None
+    custom_type_name: Optional[str] = None
     rainfall_now_mm: Optional[float] = None
     rainfall_1hr_mm: Optional[float] = None
     rainfall_24hr_mm: Optional[float] = None

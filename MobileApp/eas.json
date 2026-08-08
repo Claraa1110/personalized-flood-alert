@@ -1,0 +1,41 @@
+{
+  "cli": {
+    "version": ">= 21.4.0"
+  },
+  "build": {
+    "development": {
+      "developmentClient": true,
+      "distribution": "internal",
+      "env": {
+        "EXPO_PUBLIC_API_URL": "https://ff-weathered-paper-9628.fly.dev",
+        "EXPO_PUBLIC_SUPABASE_URL": "https://vapmbamagwnqkazxhloo.supabase.co",
+        "EXPO_PUBLIC_SUPABASE_ANON_KEY": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InZhcG1iYW1hZ3ducWthenhobG9vIiwicm9sZSI6ImFub24iLCJpYXQiOjE3Nzc0NDA1NjYsImV4cCI6MjA5MzAxNjU2Nn0.jpTfUwHmcaEM5q6usFLnxG24KhrtRpI_L-siMr3X-80"
+      }
+    },
+    "preview": {
+      "distribution": "internal",
+      "android": {
+        "buildType": "apk"
+      },
+      "env": {
+        "EXPO_PUBLIC_API_URL": "https://ff-weathered-paper-9628.fly.dev",
+        "EXPO_PUBLIC_SUPABASE_URL": "https://vapmbamagwnqkazxhloo.supabase.co",
+        "EXPO_PUBLIC_SUPABASE_ANON_KEY": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InZhcG1iYW1hZ3ducWthenhobG9vIiwicm9sZSI6ImFub24iLCJpYXQiOjE3Nzc0NDA1NjYsImV4cCI6MjA5MzAxNjU2Nn0.jpTfUwHmcaEM5q6usFLnxG24KhrtRpI_L-siMr3X-80"
+      }
+    },
+    "production": {
+      "android": {
+        "buildType": "app-bundle"
+      },
+      "autoIncrement": true,
+      "env": {
+        "EXPO_PUBLIC_API_URL": "https://ff-weathered-paper-9628.fly.dev",
+        "EXPO_PUBLIC_SUPABASE_URL": "https://vapmbamagwnqkazxhloo.supabase.co",
+        "EXPO_PUBLIC_SUPABASE_ANON_KEY": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InZhcG1iYW1hZ3ducWthenhobG9vIiwicm9sZSI6ImFub24iLCJpYXQiOjE3Nzc0NDA1NjYsImV4cCI6MjA5MzAxNjU2Nn0.jpTfUwHmcaEM5q6usFLnxG24KhrtRpI_L-siMr3X-80"
+      }
+    }
+  },
+  "submit": {
+    "production": {}
+  }
+}

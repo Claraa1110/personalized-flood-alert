@@ -1,12 +1,19 @@
-import { useState, useCallback, useMemo } from 'react';
+import { useState, useCallback, useMemo, useRef } from 'react';
 import {
   View, Text, StyleSheet,
-  ActivityIndicator, ScrollView, RefreshControl,
+  ActivityIndicator, ScrollView, RefreshControl, TouchableOpacity,
 } from 'react-native';
-import { useFocusEffect } from '@react-navigation/native';
+import { useFocusEffect, useNavigation } from '@react-navigation/native';
 import { Ionicons } from '@expo/vector-icons';
 import Svg, { Circle, Ellipse, Path, Line, G } from 'react-native-svg';
 import { apiFetch } from '../lib/api';
+import { getAdviceText } from '../lib/advice';
+import {
+  PropertyWithRisk,
+  getCachedProperties, isPropertyCacheFresh,
+  fetchPropertiesWithRisk,
+  FORECAST_TTL,
+} from '../lib/propertyCache';
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -19,30 +26,30 @@ interface Alert {
   read_at: string | null;
 }
 
-interface Property {
+// Internal derived type for display logic
+interface PropertyRisk {
   id: string;
   name: string;
   type: string;
   latitude: number;
   longitude: number;
   district_name: string | null;
-}
-
-interface PropertyRisk {
-  property: Property;
   riskPct: number;
   riskLevel: 'safe' | 'notice' | 'warning' | 'critical';
-  topScale: string | null;
   topMm: number | null;
-  topThreshold: number | null;
-  hasData: boolean;
 }
 
 interface PropertyForecast {
-  property: Property;
-  districtName: string | null;
+  id: string;
+  name: string;
+  district_name: string | null;
+  latitude: number;
+  longitude: number;
+  forecastDistrict: string | null;
   maxPop6h: number;
 }
+
+// ─── Constants ────────────────────────────────────────────────────────────────
 
 // ─── State config ─────────────────────────────────────────────────────────────
 
@@ -71,60 +78,33 @@ const STATE_TEXT: Record<DollState, string> = {
 const STATE_LABEL: Record<DollState, string> = {
   sunny:  '大晴天',
   cloudy: '多雲',
-  level2: '二級預警',
-  level1: '一級警戒',
+  level2: '注意',
+  level1: '警戒',
 };
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
-function buildRisk(property: Property, thr: any): PropertyRisk {
-  const empty: PropertyRisk = {
-    property, riskPct: 0, riskLevel: 'safe',
-    topScale: null, topMm: null, topThreshold: null, hasData: false,
-  };
-  if (!thr || thr.error) return empty;
-
-  const cr       = thr.current_rainfall as { '1h': number; '3h': number; '6h': number } | undefined;
-  const t2       = thr.thresholds?.level2 as { '1h': number | null; '3h': number | null; '6h': number | null } | undefined;
-  const apiLevel = thr.level as 'safe' | 'level2' | 'level1' | undefined;
-
-  const candidates: { scale: string; mm: number; threshold: number; pct: number }[] = [];
-  if (cr?.['1h'] != null && t2?.['1h']) candidates.push({ scale: '1H', mm: cr['1h'], threshold: t2['1h']!, pct: cr['1h'] / t2['1h']! * 100 });
-  if (cr?.['3h'] != null && t2?.['3h']) candidates.push({ scale: '3H', mm: cr['3h'], threshold: t2['3h']!, pct: cr['3h'] / t2['3h']! * 100 });
-  if (cr?.['6h'] != null && t2?.['6h']) candidates.push({ scale: '6H', mm: cr['6h'], threshold: t2['6h']!, pct: cr['6h'] / t2['6h']! * 100 });
-
-  if (candidates.length === 0) {
-    if (apiLevel === 'level1') return { ...empty, property, riskLevel: 'critical', hasData: true };
-    if (apiLevel === 'level2') return { ...empty, property, riskLevel: 'warning',  hasData: true };
-    return empty;
-  }
-
-  const top = candidates.reduce((a, b) => a.pct > b.pct ? a : b);
+function buildRisk(p: PropertyWithRisk): PropertyRisk {
   let riskLevel: PropertyRisk['riskLevel'];
-  if      (apiLevel === 'level1') riskLevel = 'critical';
-  else if (apiLevel === 'level2') riskLevel = 'warning';
-  else riskLevel = top.pct >= 80 ? 'notice' : 'safe';
+  if      (p.level === 'level1') riskLevel = 'critical';
+  else if (p.level === 'level2') riskLevel = 'warning';
+  else riskLevel = p.risk_pct >= 80 ? 'notice' : 'safe';
 
-  return { property, riskPct: top.pct, riskLevel, topScale: top.scale, topMm: top.mm, topThreshold: top.threshold, hasData: true };
+  const r1h = p.rainfall['1h'];
+  const r3h = p.rainfall['3h'];
+  const r6h = p.rainfall['6h'];
+  const topMm = r1h > 0 ? r1h : (r3h > 0 ? r3h : (r6h > 0 ? r6h : null));
+
+  return {
+    id: p.id, name: p.name, type: p.type ?? 'house',
+    latitude: p.latitude, longitude: p.longitude, district_name: p.district_name,
+    riskPct: p.risk_pct, riskLevel, topMm,
+  };
 }
 
 function getAdviceForLevel(riskLevel: PropertyRisk['riskLevel'], type: string): string {
   const key = riskLevel === 'critical' ? 'level1' : 'level2';
-  const map: Record<string, Record<string, string>> = {
-    level1: {
-      house:     '緊急：一樓人員注意安全，切勿進入地下室',
-      car:       '緊急：立即移車，遠離低窪停車區',
-      warehouse: '緊急：關閉電源總開關，人員撤離',
-      other:     '緊急：遠離淹水區域，注意人身安全',
-    },
-    level2: {
-      house:     '貴重物品、家電移至高處，確認一樓門窗防水',
-      car:       '盡快將車輛移往高處停放',
-      warehouse: '墊高庫存，確認電源總開關位置',
-      other:     '重要物品移至高處，密切關注水情',
-    },
-  };
-  return map[key][type] ?? map[key].other;
+  return getAdviceText(key, type);
 }
 
 function formatAlertDate(isoStr: string): string {
@@ -133,7 +113,7 @@ function formatAlertDate(isoStr: string): string {
 }
 
 // ─── EmojiFace ────────────────────────────────────────────────────────────────
-// viewBox 0 0 150 140   face: cx=68 cy=65 r=42
+// viewBox -7 0 150 140  face: cx=68 → visual center at (68+7)/150 = 50%
 
 function EmojiFace({ state, size = 160 }: { state: DollState; size?: number }) {
   const FACE_FILL: Record<DollState, string> = {
@@ -147,7 +127,7 @@ function EmojiFace({ state, size = 160 }: { state: DollState; size?: number }) {
   const cx = 68, cy = 65, r = 42;
 
   return (
-    <Svg width={size} height={size * 140 / 150} viewBox="0 0 150 140">
+    <Svg width={size} height={size * 140 / 150} viewBox="-7 0 150 140">
 
       {/* ── Sun rays (sunny) ── */}
       {state === 'sunny' && [0, 45, 90, 135, 180, 225, 270, 315].map(deg => {
@@ -252,85 +232,84 @@ function EmojiFace({ state, size = 160 }: { state: DollState; size?: number }) {
 // ─── HomeScreen ───────────────────────────────────────────────────────────────
 
 export default function HomeScreen() {
+  const navigation = useNavigation<any>();
   const [alerts, setAlerts]               = useState<Alert[]>([]);
-  const [propertyRisks, setPropertyRisks] = useState<PropertyRisk[]>([]);
+  const [propertyRisks, setPropertyRisks] = useState<PropertyRisk[]>(() =>
+    getCachedProperties().map(buildRisk).sort((a, b) => b.riskPct - a.riskPct)
+  );
   const [forecastList, setForecastList]   = useState<PropertyForecast[]>([]);
-  const [loading, setLoading]             = useState(true);
-  const [risksLoading, setRisksLoading]   = useState(true);
+  const [loading, setLoading]             = useState(() => getCachedProperties().length === 0);
   const [forecastLoading, setForecastLoading] = useState(true);
   const [refreshing, setRefreshing]       = useState(false);
+  const forecastCachedAt = useRef<number>(0);
 
-  const fetchPropertyRisks = async (properties: Property[]): Promise<PropertyRisk[]> => {
-    const results = await Promise.all(
-      properties.map(async (p) => {
-        try {
-          const res = await apiFetch(`/api/threshold?lat=${p.latitude}&lng=${p.longitude}`);
-          if (!res.ok) return buildRisk(p, null);
-          return buildRisk(p, await res.json());
-        } catch {
-          return buildRisk(p, null);
-        }
-      })
-    );
-    return results.sort((a, b) => b.riskPct - a.riskPct);
-  };
-
-  const fetchForecasts = async (properties: Property[]): Promise<void> => {
-    const results = await Promise.all(
-      properties.map(async (p) => {
-        try {
-          const resp = await apiFetch(`/api/forecast?lat=${p.latitude}&lng=${p.longitude}`);
-          if (!resp.ok) return null;
-          const data = await resp.json();
-          if (data.max_pop_6h === null) return null;
-          return { property: p, districtName: data.district_name as string | null, maxPop6h: data.max_pop_6h as number };
-        } catch {
-          return null;
-        }
+  const fetchForecasts = async (props: PropertyWithRisk[]): Promise<void> => {
+    const settled = await Promise.allSettled(
+      props.map(async (p) => {
+        const resp = await apiFetch(`/api/forecast?lat=${p.latitude}&lng=${p.longitude}`);
+        if (!resp.ok) return null;
+        const data = await resp.json();
+        if (data.max_pop_6h === null) return null;
+        return {
+          id: p.id, name: p.name, district_name: p.district_name,
+          latitude: p.latitude, longitude: p.longitude,
+          forecastDistrict: data.district_name as string | null,
+          maxPop6h: data.max_pop_6h as number,
+        } satisfies PropertyForecast;
       })
     );
     setForecastList(
-      results
+      settled
+        .map(r => (r.status === 'fulfilled' ? r.value : null))
         .filter((r): r is PropertyForecast => r !== null && r.maxPop6h >= 30)
         .sort((a, b) => b.maxPop6h - a.maxPop6h)
     );
     setForecastLoading(false);
   };
 
-  const fetchData = async () => {
-    const [alertResult, propertiesResult] = await Promise.allSettled([
+  const fetchData = async (force = false) => {
+    // 快取命中：立即更新 UI，不顯示 spinner（解決 stale closure：用 module-level 函式判斷）
+    if (!force && isPropertyCacheFresh()) {
+      const cached = getCachedProperties();
+      if (cached.length > 0)
+        setPropertyRisks(cached.map(buildRisk).sort((a, b) => b.riskPct - a.riskPct));
+      return;
+    }
+
+    // 完全無資料（第一次）才顯示全畫面 spinner
+    if (getCachedProperties().length === 0) setLoading(true);
+
+    const forecastStale = Date.now() - forecastCachedAt.current > FORECAST_TTL;
+    if (force || forecastStale) setForecastLoading(true);
+
+    const [alertResult, riskResult] = await Promise.allSettled([
       apiFetch('/api/alerts'),
-      apiFetch('/api/properties'),
+      fetchPropertiesWithRisk(force),
     ]);
 
     if (alertResult.status === 'fulfilled' && alertResult.value.ok) {
       const data = await alertResult.value.json();
       setAlerts(data.alerts ?? data);
     }
-    setLoading(false);
 
-    if (propertiesResult.status === 'fulfilled' && propertiesResult.value.ok) {
-      const props: Property[] = await propertiesResult.value.json();
-      const [risks] = await Promise.all([
-        fetchPropertyRisks(props),
-        fetchForecasts(props),
-      ]);
-      setPropertyRisks(risks);
+    if (riskResult.status === 'fulfilled') {
+      const propsWithRisk = riskResult.value;
+      setPropertyRisks(propsWithRisk.map(buildRisk).sort((a, b) => b.riskPct - a.riskPct));
+      if (force || forecastStale) {
+        forecastCachedAt.current = Date.now();
+        fetchForecasts(propsWithRisk);
+      }
     } else {
       setForecastLoading(false);
     }
-    setRisksLoading(false);
+
+    setLoading(false);
     setRefreshing(false);
   };
 
-  useFocusEffect(useCallback(() => {
-    setLoading(true);
-    setRisksLoading(true);
-    setForecastLoading(true);
-    fetchData();
-  }, []));
+  useFocusEffect(useCallback(() => { fetchData(); }, []));
 
-  const onRefresh = () => { setRefreshing(true); setForecastLoading(true); fetchData(); };
+  const onRefresh = () => { setRefreshing(true); fetchData(true); };
 
   // ── State derivation ─────────────────────────────────────────────────────────
 
@@ -347,8 +326,8 @@ export default function HomeScreen() {
   const isSafe       = dollState === 'sunny' || dollState === 'cloudy';
   const alertedRisks: PropertyRisk[] = DEBUG_FAKE_ALERTS
     ? DEBUG_FAKE_ALERTS.map(d => ({
-        property: { id: d.name, name: d.name, type: d.type, latitude: 0, longitude: 0, district_name: null },
-        riskPct: 100, riskLevel: d.riskLevel, topScale: null, topMm: null, topThreshold: null, hasData: false,
+        id: d.name, name: d.name, type: d.type, latitude: 0, longitude: 0, district_name: null,
+        riskPct: 100, riskLevel: d.riskLevel, topMm: null,
       }))
     : propertyRisks.filter(r => r.riskLevel === 'critical' || r.riskLevel === 'warning');
 
@@ -374,13 +353,13 @@ export default function HomeScreen() {
     return (
       <View style={styles.forecastGroup}>
         {forecastList.map(f => {
-          const district = f.districtName ?? f.property.district_name ?? '';
+          const district = f.forecastDistrict ?? f.district_name ?? '';
           return (
-            <View key={f.property.id} style={[styles.forecastCard, { backgroundColor: 'rgba(255,255,255,0.50)' }]}>
+            <View key={f.id} style={[styles.forecastCard, { backgroundColor: 'rgba(255,255,255,0.50)' }]}>
               <Text style={styles.forecastIcon}>{getIcon(f.maxPop6h)}</Text>
               <View style={styles.forecastBody}>
                 <Text style={[styles.forecastName, { color: stateText }]} numberOfLines={1}>
-                  {f.property.name}{district ? `（${district}）` : ''}
+                  {f.name}{district ? `（${district}）` : ''}
                 </Text>
                 <Text style={[styles.forecastPop, { color: stateText }]}>
                   未來 6 小時降雨機率 {f.maxPop6h}%
@@ -402,6 +381,32 @@ export default function HomeScreen() {
     );
   }
 
+  if (propertyRisks.length === 0) {
+    return (
+      <ScrollView
+        style={styles.emptyScroll}
+        contentContainerStyle={styles.emptyContent}
+        refreshControl={
+          <RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor="#2E75B6" />
+        }
+      >
+        <EmojiFace state="cloudy" size={140} />
+        <Text style={styles.emptyTitle}>還沒有登記任何財產</Text>
+        <Text style={styles.emptySub}>
+          新增你的家、車輛或店面{'\n'}水先知會為你監看淹水風險
+        </Text>
+        <TouchableOpacity
+          style={styles.emptyBtn}
+          onPress={() => navigation.navigate('列表')}
+          activeOpacity={0.8}
+        >
+          <Ionicons name="add-circle-outline" size={20} color="#fff" />
+          <Text style={styles.emptyBtnText}>新增財產</Text>
+        </TouchableOpacity>
+      </ScrollView>
+    );
+  }
+
   return (
     <ScrollView
       style={[styles.scroll, { backgroundColor: stateBg }]}
@@ -412,43 +417,39 @@ export default function HomeScreen() {
     >
       {/* ── Hero ── */}
       <View style={styles.hero}>
-        {risksLoading ? (
-          <ActivityIndicator size="large" color={stateText} style={{ marginVertical: 70 }} />
-        ) : (
-          <>
-            <EmojiFace state={dollState} size={160} />
+        <>
+          <EmojiFace state={dollState} size={160} />
 
-            <Text style={[styles.stateLabel, { color: stateText }]}>
-              {STATE_LABEL[dollState]}
-            </Text>
+          <Text style={[styles.stateLabel, { color: stateText }]}>
+            {STATE_LABEL[dollState]}
+          </Text>
 
-            {isSafe ? (
-              <View style={styles.safeInfo}>
-                <Text style={[styles.safeText, { color: stateText }]}>
-                  你的財產都在安全範圍
-                </Text>
-                <Text style={[styles.lastAlertText, { color: stateText }]}>
-                  {alerts.length > 0
-                    ? `最近一次警報：${formatAlertDate(alerts[0].created_at)}`
-                    : '尚無警報記錄'}
-                </Text>
-              </View>
-            ) : (
-              <View style={styles.adviceList}>
-                {alertedRisks.slice(0, 4).map(r => (
-                  <View key={r.property.id} style={[styles.adviceRow, { borderLeftColor: stateText + 'aa' }]}>
-                    <Text style={[styles.advicePropName, { color: stateText }]}>
-                      {r.property.name}
-                    </Text>
-                    <Text style={[styles.adviceText, { color: stateText }]}>
-                      {getAdviceForLevel(r.riskLevel, r.property.type)}
-                    </Text>
-                  </View>
-                ))}
-              </View>
-            )}
-          </>
-        )}
+          {isSafe ? (
+            <View style={styles.safeInfo}>
+              <Text style={[styles.safeText, { color: stateText }]}>
+                你的財產都在安全範圍
+              </Text>
+              <Text style={[styles.lastAlertText, { color: stateText }]}>
+                {alerts.length > 0
+                  ? `最近一次警報：${formatAlertDate(alerts[0].created_at)}`
+                  : '尚無警報記錄'}
+              </Text>
+            </View>
+          ) : (
+            <View style={styles.adviceList}>
+              {alertedRisks.slice(0, 4).map(r => (
+                <View key={r.id} style={[styles.adviceRow, { borderLeftColor: stateText + 'aa' }]}>
+                  <Text style={[styles.advicePropName, { color: stateText }]}>
+                    {r.name}
+                  </Text>
+                  <Text style={[styles.adviceText, { color: stateText }]}>
+                    {getAdviceForLevel(r.riskLevel, r.type)}
+                  </Text>
+                </View>
+              ))}
+            </View>
+          )}
+        </>
       </View>
 
       {/* ── Forecast ── */}
@@ -472,6 +473,29 @@ const styles = StyleSheet.create({
   content:  { paddingBottom: 48 },
   center:   { flex: 1, justifyContent: 'center', alignItems: 'center', backgroundColor: '#F0F4F8', gap: 10 },
   centerText: { fontSize: 14, color: '#aaa' },
+
+  // ── Empty state ──
+  emptyScroll:   { flex: 1, backgroundColor: '#EEF4FB' },
+  emptyContent:  {
+    flexGrow: 1, justifyContent: 'center', alignItems: 'center',
+    paddingHorizontal: 36, paddingVertical: 48, gap: 0,
+  },
+  emptyTitle: {
+    fontSize: 20, fontWeight: '800', color: '#1a1a2e',
+    marginTop: 20, marginBottom: 10, textAlign: 'center',
+  },
+  emptySub: {
+    fontSize: 14, color: '#6b7a8d', textAlign: 'center', lineHeight: 22,
+    marginBottom: 32,
+  },
+  emptyBtn: {
+    flexDirection: 'row', alignItems: 'center', gap: 8,
+    backgroundColor: '#2E75B6', paddingVertical: 14, paddingHorizontal: 28,
+    borderRadius: 14,
+    shadowColor: '#2E75B6', shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.3, shadowRadius: 8, elevation: 5,
+  },
+  emptyBtnText: { color: '#fff', fontSize: 16, fontWeight: '700' },
 
   // ── Hero ──
   hero: {

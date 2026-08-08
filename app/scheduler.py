@@ -3,7 +3,6 @@ from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from sqlalchemy import text
 from app.database import AsyncSessionLocal
 from app.services.cwa_service import fetch_rainfall_stations
-from app.services.news_service import fetch_and_classify_news
 from app.services.risk_engine import evaluate_all_properties
 
 logger = logging.getLogger(__name__)
@@ -37,15 +36,6 @@ def setup_scheduler():
         "interval",
         minutes=10,
         id="fetch_rainfall",
-        replace_existing=True,
-        max_instances=1,
-    )
-
-    scheduler.add_job(
-        fetch_and_classify_news,
-        "interval",
-        hours=1,
-        id="fetch_news",
         replace_existing=True,
         max_instances=1,
     )

@@ -41,6 +41,9 @@ async def geocode_address(address: str = Query(..., description="地址")):
     """將地址轉換為經緯度（使用 Nominatim / OpenStreetMap）"""
     global _last_call
 
+    # 正規化：台 → 臺（OSM 台灣資料以臺北市/臺中市等正式寫法儲存）
+    normalized = address.replace("台", "臺")
+
     async with _lock:
         elapsed = time.monotonic() - _last_call
         if elapsed < 1.0:
@@ -48,12 +51,12 @@ async def geocode_address(address: str = Query(..., description="地址")):
         _last_call = time.monotonic()
 
     async with httpx.AsyncClient(timeout=10.0) as client:
-        results = await _nominatim_query(client, address)
+        results = await _nominatim_query(client, normalized)
 
         # fallback：OSM 台灣門牌號碼資料稀疏，移除末尾號碼後重試
         if not results:
-            fallback = re.sub(r'\d+號$', '', address).strip()
-            if fallback and fallback != address:
+            fallback = re.sub(r'\d+號$', '', normalized).strip()
+            if fallback and fallback != normalized:
                 results = await _nominatim_query(client, fallback)
 
     if not results:

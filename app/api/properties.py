@@ -26,6 +26,7 @@ def to_response(prop: Property, rainfall_row=None) -> PropertyResponse:
         longitude=shape.x,
         district_name=prop.district_name,
         flood_risk_level=prop.flood_risk_level,
+        custom_type_name=prop.custom_type_name,
     )
     if rainfall_row:
         response.rainfall_now_mm = rainfall_row.rainfall_mm
@@ -122,6 +123,7 @@ async def create_property(
         alert_enabled=property_data.alert_enabled,
         district_name=district_name,
         flood_risk_level=flood_risk_level,
+        custom_type_name=property_data.custom_type_name if property_data.type == "custom" else None,
     )
     db.add(prop)
     await db.commit()
@@ -197,6 +199,7 @@ async def update_property(
     prop.alert_enabled = property_data.alert_enabled
     prop.district_name = district_name
     prop.flood_risk_level = flood_risk_level
+    prop.custom_type_name = property_data.custom_type_name if property_data.type == "custom" else None
 
     await db.commit()
     await db.refresh(prop)

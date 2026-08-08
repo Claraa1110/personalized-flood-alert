@@ -1,0 +1,15 @@
+.env
+.env.*
+.venv
+.git
+.gitignore
+__pycache__/
+*.pyc
+.DS_Store
+.ruff_cache
+data/
+MobileApp/
+alembic/
+scripts/
+README.md
+.dist

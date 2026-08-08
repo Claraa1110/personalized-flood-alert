@@ -4,8 +4,8 @@
   "main": "index.ts",
   "scripts": {
     "start": "expo start",
-    "android": "expo start --android",
-    "ios": "expo start --ios",
+    "android": "expo run:android",
+    "ios": "expo run:ios",
     "web": "expo start --web"
   },
   "dependencies": {
@@ -16,9 +16,10 @@
     "@supabase/supabase-js": "^2.111.0",
     "@tanstack/react-query": "^5.100.6",
     "axios": "^1.15.2",
-    "expo": "~54.0.33",
+    "expo": "~54.0.36",
     "expo-constants": "~18.0.13",
     "expo-device": "~8.0.10",
+    "expo-font": "~14.0.12",
     "expo-location": "~19.0.8",
     "expo-notifications": "~0.32.17",
     "expo-status-bar": "~3.0.9",

@@ -1,4 +1,5 @@
 import { useState, useEffect, useCallback } from 'react';
+import { updateBadgeCount } from '../lib/notifications';
 import {
   View, Text, StyleSheet, FlatList,
   ActivityIndicator, TouchableOpacity, RefreshControl,
@@ -6,6 +7,7 @@ import {
 import { Ionicons } from '@expo/vector-icons';
 import { useFocusEffect } from '@react-navigation/native';
 import { apiFetch } from '../lib/api';
+import { getAdviceText } from '../lib/advice';
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -21,6 +23,7 @@ interface Alert {
 interface PropertyDetail {
   district_name: string | null;
   type: string | null;
+  custom_type_name: string | null;
 }
 
 interface ParsedMessage {
@@ -36,26 +39,6 @@ interface ParsedMessage {
 // 【財產名稱】達一級警戒 3H 雨量 52.5mm（已達警戒值 45.0mm）
 const MSG_RE = /【(.+?)】達(一級警戒|二級預警)\s+(\w+)\s+雨量\s+([\d.]+)mm（已達(?:警戒|預警)值\s+([\d.]+)mm）/;
 
-const SCALE_LABEL: Record<string, string> = {
-  '1H': '1 小時',
-  '3H': '3 小時',
-  '6H': '6 小時',
-};
-
-const ALERT_ADVICE: Record<string, Record<string, string>> = {
-  level1: {
-    house:     '緊急：一樓人員注意安全，切勿進入地下室',
-    car:       '緊急：立即移車，遠離低窪停車區',
-    warehouse: '緊急：關閉電源總開關，人員撤離',
-    other:     '緊急：遠離淹水區域，注意人身安全',
-  },
-  level2: {
-    house:     '貴重物品、家電移至高處，確認一樓門窗防水',
-    car:       '盡快將車輛移往高處停放',
-    warehouse: '墊高庫存，確認電源總開關位置',
-    other:     '重要物品移至高處，密切關注水情',
-  },
-};
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -79,6 +62,7 @@ function parseUTC(isoStr: string): Date {
 
 function formatTime(isoStr: string) {
   return parseUTC(isoStr).toLocaleString('zh-TW', {
+    timeZone: 'Asia/Taipei',
     month: 'numeric', day: 'numeric',
     hour: '2-digit', minute: '2-digit',
   });
@@ -106,6 +90,7 @@ export default function AlertScreen() {
             results[pid] = {
               district_name: p.district_name ?? null,
               type: p.type ?? null,
+              custom_type_name: p.custom_type_name ?? null,
             };
           }
         } catch { /* ignore */ }
@@ -144,7 +129,9 @@ export default function AlertScreen() {
   useEffect(() => { fetchAlerts(); }, []);
 
   useFocusEffect(useCallback(() => {
-    apiFetch('/api/alerts/mark-all-read', { method: 'POST' }).catch(() => {});
+    apiFetch('/api/alerts/mark-all-read', { method: 'POST' })
+      .then(() => updateBadgeCount())
+      .catch(() => {});
   }, []));
 
   const onRefresh = () => { setRefreshing(true); fetchAlerts(); };
@@ -216,11 +203,10 @@ export default function AlertScreen() {
           const typeKey = prop?.type ?? 'other';
           const isLevel1 = item.level === 'level1';
           const accentColor = isLevel1 ? '#C00000' : '#E67E22';
-          const levelLabel = parsed?.alertLevel ?? (isLevel1 ? '一級警戒' : '二級預警');
-          const scaleLabel = parsed ? (SCALE_LABEL[parsed.scale] ?? parsed.scale) : '';
+          const rawLevel = parsed?.alertLevel ?? (isLevel1 ? '一級警戒' : '二級預警');
+          const levelLabel = rawLevel === '一級警戒' ? '警戒' : '注意';
           const levelKey = isLevel1 ? 'level1' : 'level2';
-          const adviceSet = ALERT_ADVICE[levelKey];
-          const advice = adviceSet[typeKey] ?? adviceSet.other;
+          const advice = getAdviceText(levelKey, typeKey);
           const adviceBg = isLevel1 ? '#FFF0F0' : '#FFF5EC';
           const adviceBorder = isLevel1 ? '#FFCCCC' : '#FFDDB8';
           const adviceTextColor = isLevel1 ? '#8B0000' : '#7D4000';
@@ -252,18 +238,6 @@ export default function AlertScreen() {
                   {prop ? (prop.district_name ?? '無地區資料') : '—'}
                 </Text>
               </View>
-
-              {/* 雨量自然語句 */}
-              {parsed && (
-                <Text style={styles.rainfallSentence}>
-                  <Text style={styles.rainfallScaleLabel}>{scaleLabel}</Text>
-                  {'累積雨量 '}
-                  <Text style={[styles.rainfallValue, { color: accentColor }]}>
-                    {parsed.actualMm} mm
-                  </Text>
-                  {isLevel1 ? '，已超過警戒值' : '，已超過預警值'}
-                </Text>
-              )}
 
               {/* 行動建議 */}
               <View style={[styles.adviceBox, { backgroundColor: adviceBg, borderColor: adviceBorder }]}>
