@@ -90,12 +90,13 @@ async def evaluate_all_properties():
     """排程用：遍歷所有財產，依兩級門檻評估風險並發送警報"""
     async with AsyncSessionLocal() as session:
         result = await session.execute(text("""
-            SELECT id, user_id, name, district_name, type, custom_type_name,
+            SELECT id, device_id, name, district_name, type, custom_type_name,
                    ST_Y(location::geometry) AS lat,
                    ST_X(location::geometry) AS lng
             FROM properties
             WHERE alert_enabled = true
             AND location IS NOT NULL
+            AND device_id IS NOT NULL
         """))
         properties = result.fetchall()
 
@@ -204,7 +205,7 @@ async def evaluate_all_properties():
                 alert_count += 1
                 logger.info(f"財產 {prop.name}：{level_label} 觸發（{triggered_scale}）")
                 pending_pushes.append({
-                    "user_id": str(prop.user_id),
+                    "device_id": prop.device_id,
                     "level": triggered_level,
                     "name": prop.name,
                     "district": prop.district_name or "",
@@ -221,36 +222,34 @@ async def evaluate_all_properties():
         # commit 後送推播（不影響警報記錄）
         for push in pending_pushes:
             try:
-                # 查通知偏好，預設都開啟
                 pref_row = await session.execute(
-                    text("SELECT notify_enabled, sound_enabled FROM user_notification_settings WHERE user_id = :uid"),
-                    {"uid": push["user_id"]},
+                    text("SELECT notify_enabled, sound_enabled FROM user_notification_settings WHERE device_id = :did"),
+                    {"did": push["device_id"]},
                 )
                 pref = pref_row.fetchone()
                 notify_enabled = pref.notify_enabled if pref else True
                 sound_enabled = pref.sound_enabled if pref else True
 
                 if not notify_enabled:
-                    logger.info(f"使用者 {push['user_id']} 已關閉推播，跳過")
+                    logger.info(f"裝置 {push['device_id']} 已關閉推播，跳過")
                     continue
 
                 token_rows = await session.execute(
-                    text("SELECT push_token FROM push_tokens WHERE user_id = :uid"),
-                    {"uid": push["user_id"]},
+                    text("SELECT push_token FROM push_tokens WHERE device_id = :did"),
+                    {"did": push["device_id"]},
                 )
                 tokens = [r.push_token for r in token_rows.fetchall()]
                 if not tokens:
                     continue
 
-                # 計算該使用者目前有幾個財產在警戒中（作為 app icon badge 數字）
                 badge_row = await session.execute(text("""
                     SELECT COUNT(DISTINCT a.property_id) AS cnt
                     FROM alerts a
                     JOIN properties p ON a.property_id = p.id
-                    WHERE p.user_id = :uid
+                    WHERE p.device_id = :did
                     AND a.level IN ('level1', 'level2')
                     AND a.created_at > NOW() - INTERVAL '6 hours'
-                """), {"uid": push["user_id"]})
+                """), {"did": push["device_id"]})
                 badge = int((badge_row.fetchone() or (1,))[0]) or 1
 
                 advice_text = _get_push_advice(push["level"], push["type"])
@@ -264,4 +263,4 @@ async def evaluate_all_properties():
                 sound = "default" if sound_enabled else None
                 await send_push_notifications(tokens, title, body, badge=badge, sound=sound)
             except Exception as e:
-                logger.warning(f"推播發送例外（{push['name']}）: {e}")
+                logger.warning(f"推播發送例外（{push['name']} / {push['device_id']}）: {e}")

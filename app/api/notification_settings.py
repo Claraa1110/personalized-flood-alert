@@ -3,7 +3,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import text
 from pydantic import BaseModel
 from app.dependencies import get_db
-from app.auth import CurrentUser, get_current_user
+from app.auth import get_device_id
 
 router = APIRouter()
 
@@ -16,11 +16,11 @@ class NotificationSettingsBody(BaseModel):
 @router.get("/notification-settings")
 async def get_notification_settings(
     db: AsyncSession = Depends(get_db),
-    user: CurrentUser = Depends(get_current_user),
+    device_id: str = Depends(get_device_id),
 ):
     result = await db.execute(
-        text("SELECT notify_enabled, sound_enabled FROM user_notification_settings WHERE user_id = :uid"),
-        {"uid": user.user_id},
+        text("SELECT notify_enabled, sound_enabled FROM user_notification_settings WHERE device_id = :device_id"),
+        {"device_id": device_id},
     )
     row = result.fetchone()
     if not row:
@@ -32,15 +32,16 @@ async def get_notification_settings(
 async def update_notification_settings(
     body: NotificationSettingsBody,
     db: AsyncSession = Depends(get_db),
-    user: CurrentUser = Depends(get_current_user),
+    device_id: str = Depends(get_device_id),
 ):
     await db.execute(text("""
-        INSERT INTO user_notification_settings (user_id, notify_enabled, sound_enabled, updated_at)
-        VALUES (:uid, :notify, :sound, NOW())
-        ON CONFLICT (user_id) DO UPDATE SET
+        INSERT INTO user_notification_settings (user_id, device_id, notify_enabled, sound_enabled, updated_at)
+        VALUES (gen_random_uuid(), :device_id, :notify, :sound, NOW())
+        ON CONFLICT (device_id) WHERE device_id IS NOT NULL
+        DO UPDATE SET
             notify_enabled = EXCLUDED.notify_enabled,
             sound_enabled  = EXCLUDED.sound_enabled,
             updated_at     = NOW()
-    """), {"uid": user.user_id, "notify": body.notify_enabled, "sound": body.sound_enabled})
+    """), {"device_id": device_id, "notify": body.notify_enabled, "sound": body.sound_enabled})
     await db.commit()
     return {"notify_enabled": body.notify_enabled, "sound_enabled": body.sound_enabled}

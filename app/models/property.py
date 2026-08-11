@@ -11,7 +11,8 @@ class Property(Base):
     __tablename__ = "properties"
 
     id: Mapped[UUID] = mapped_column(primary_key=True, default=uuid4)
-    user_id: Mapped[UUID] = mapped_column(nullable=False)
+    user_id: Mapped[Optional[UUID]] = mapped_column(nullable=True)
+    device_id: Mapped[Optional[str]] = mapped_column(String(36), nullable=True)
     name: Mapped[str] = mapped_column(String(100))
     type: Mapped[str] = mapped_column(String(20))
     location: Mapped[Any] = mapped_column(Geography(geometry_type="POINT", srid=4326))

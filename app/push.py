@@ -19,7 +19,13 @@ async def send_push_notifications(
         return
 
     def make_msg(token: str) -> dict:
-        m: dict = {"to": token, "title": title, "body": body, "sound": sound}
+        m: dict = {
+            "to": token,
+            "title": title,
+            "body": body,
+            "sound": sound,
+            "channelId": "flood-alerts",
+        }
         if badge is not None:
             m["badge"] = badge
         return m

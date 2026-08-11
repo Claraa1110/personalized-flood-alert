@@ -1,9 +1,8 @@
-from uuid import UUID
 from fastapi import APIRouter, Depends
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 from app.dependencies import get_db
-from app.auth import CurrentUser, get_current_user
+from app.auth import get_device_id
 
 router = APIRouter()
 
@@ -72,19 +71,8 @@ def _max_pct(r1h: float, r3h: float, r6h: float, t2: dict) -> float:
 @router.get("/properties-with-risk")
 async def get_properties_with_risk(
     db: AsyncSession = Depends(get_db),
-    user: CurrentUser = Depends(get_current_user),
+    device_id: str = Depends(get_device_id),
 ):
-    """
-    一支 API 回傳所有財產 + 完整風險資訊（取代前端 N×threshold + rainfall 請求）。
-
-    批次查詢策略（共 4 次 DB 查詢，與財產數量無關）：
-    1. properties JOIN LATERAL districts  → 取得所有財產 + 行政區
-    2. properties LEFT JOIN LATERAL rainfall → 批次取得各財產最近測站的時雨量
-    3. wra_alert_thresholds WHERE district_name = ANY(towns) → 批次門檻
-    4. corrected_thresholds WHERE district_name = ANY(towns)  → 批次校正門檻
-    """
-    uid = UUID(user.user_id)
-
     # ── Query 1: 所有財產 + 行政區 LATERAL ───────────────────────────────────
     props_rows = (await db.execute(text("""
         SELECT
@@ -102,13 +90,13 @@ async def get_properties_with_risk(
             )
             LIMIT 1
         ) d ON true
-        WHERE p.user_id = :uid
-    """), {"uid": uid})).fetchall()
+        WHERE p.device_id = :device_id
+    """), {"device_id": device_id})).fetchall()
 
     if not props_rows:
         return []
 
-    # ── Query 2: 各財產雨量（直接讀氣象署官方 1h/3h/6h 值）────────────────
+    # ── Query 2: 各財產雨量 ────────────────────────────────────────────────
     rainfall_rows = (await db.execute(text("""
         SELECT
             p.id AS property_id,
@@ -124,8 +112,8 @@ async def get_properties_with_risk(
             ORDER BY observed_at DESC, ST_Distance(location, p.location)
             LIMIT 1
         ) r ON true
-        WHERE p.user_id = :uid
-    """), {"uid": uid})).fetchall()
+        WHERE p.device_id = :device_id
+    """), {"device_id": device_id})).fetchall()
 
     rainfall_map = {str(row.property_id): row for row in rainfall_rows}
 
@@ -177,7 +165,6 @@ async def get_properties_with_risk(
 
         if corrected:
             raw_t2 = {k: v for k, v in corrected.items() if v is not None}
-            # Safety: corrected level2 must be < level1
             t2 = {}
             for scale in ('1h', '3h', '6h'):
                 c = raw_t2.get(scale)

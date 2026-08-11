@@ -1,4 +1,4 @@
-import { useState, useCallback, useMemo, useRef } from 'react';
+import { useState, useCallback, useMemo } from 'react';
 import {
   View, Text, StyleSheet,
   ActivityIndicator, ScrollView, RefreshControl, TouchableOpacity,
@@ -8,10 +8,12 @@ import { Ionicons } from '@expo/vector-icons';
 import Svg, { Circle, Ellipse, Path, Line, G } from 'react-native-svg';
 import { apiFetch } from '../lib/api';
 import { getAdviceText } from '../lib/advice';
+import { syncAppIcon } from '../lib/appIcon';
 import {
   PropertyWithRisk,
   getCachedProperties, isPropertyCacheFresh,
   fetchPropertiesWithRisk,
+  getForecastCachedAt, setForecastCachedAt,
   FORECAST_TTL,
 } from '../lib/propertyCache';
 
@@ -46,7 +48,8 @@ interface PropertyForecast {
   latitude: number;
   longitude: number;
   forecastDistrict: string | null;
-  maxPop6h: number;
+  maxPop6h: number | null;
+  temperature: number | null;
 }
 
 // ─── Constants ────────────────────────────────────────────────────────────────
@@ -239,72 +242,95 @@ export default function HomeScreen() {
   );
   const [forecastList, setForecastList]   = useState<PropertyForecast[]>([]);
   const [loading, setLoading]             = useState(() => getCachedProperties().length === 0);
-  const [forecastLoading, setForecastLoading] = useState(true);
+  const [forecastLoading, setForecastLoading] = useState(false);
+  const [isSyncing, setIsSyncing]         = useState(false);
   const [refreshing, setRefreshing]       = useState(false);
-  const forecastCachedAt = useRef<number>(0);
 
   const fetchForecasts = async (props: PropertyWithRisk[]): Promise<void> => {
     const settled = await Promise.allSettled(
-      props.map(async (p) => {
+      props.map(async (p): Promise<PropertyForecast | null> => {
         const resp = await apiFetch(`/api/forecast?lat=${p.latitude}&lng=${p.longitude}`);
         if (!resp.ok) return null;
         const data = await resp.json();
-        if (data.max_pop_6h === null) return null;
+        const maxPop6h: number | null = data.max_pop_6h ?? null;
+        const temperature: number | null = data.temperature ?? null;
+        if (maxPop6h === null && temperature === null) return null;
         return {
           id: p.id, name: p.name, district_name: p.district_name,
           latitude: p.latitude, longitude: p.longitude,
           forecastDistrict: data.district_name as string | null,
-          maxPop6h: data.max_pop_6h as number,
-        } satisfies PropertyForecast;
+          maxPop6h,
+          temperature,
+        };
       })
     );
     setForecastList(
       settled
         .map(r => (r.status === 'fulfilled' ? r.value : null))
-        .filter((r): r is PropertyForecast => r !== null && r.maxPop6h >= 30)
-        .sort((a, b) => b.maxPop6h - a.maxPop6h)
+        .filter((r): r is PropertyForecast => r !== null)
+        .sort((a, b) => (b.maxPop6h ?? -1) - (a.maxPop6h ?? -1))
     );
     setForecastLoading(false);
   };
 
   const fetchData = async (force = false) => {
-    // 快取命中：立即更新 UI，不顯示 spinner（解決 stale closure：用 module-level 函式判斷）
+    const forecastStale = Date.now() - getForecastCachedAt() > FORECAST_TTL;
+
+    // 財產快取命中：立即更新 UI，不顯示 spinner
     if (!force && isPropertyCacheFresh()) {
       const cached = getCachedProperties();
       if (cached.length > 0)
         setPropertyRisks(cached.map(buildRisk).sort((a, b) => b.riskPct - a.riskPct));
+
+      if (!forecastStale) return;  // 預報也是新的 → 完全結束
+
+      // 財產快取新鮮，但預報快取失效（例如剛新增財產）→ 只補抓預報
+      setIsSyncing(true);
+      try {
+        setForecastCachedAt(Date.now());
+        await fetchForecasts(cached);
+      } finally {
+        setIsSyncing(false);
+      }
       return;
     }
 
-    // 完全無資料（第一次）才顯示全畫面 spinner
+    // 完全無資料（第一次）才顯示全畫面 spinner；有快取則只顯示小更新指示
     if (getCachedProperties().length === 0) setLoading(true);
+    setIsSyncing(true);
 
-    const forecastStale = Date.now() - forecastCachedAt.current > FORECAST_TTL;
-    if (force || forecastStale) setForecastLoading(true);
+    // 預報 spinner 只在手動下拉更新時顯示，背景更新靜默進行
+    if (force) setForecastLoading(true);
 
-    const [alertResult, riskResult] = await Promise.allSettled([
-      apiFetch('/api/alerts'),
-      fetchPropertiesWithRisk(force),
-    ]);
+    try {
+      const [alertResult, riskResult] = await Promise.allSettled([
+        apiFetch('/api/alerts'),
+        fetchPropertiesWithRisk(force),
+      ]);
 
-    if (alertResult.status === 'fulfilled' && alertResult.value.ok) {
-      const data = await alertResult.value.json();
-      setAlerts(data.alerts ?? data);
-    }
-
-    if (riskResult.status === 'fulfilled') {
-      const propsWithRisk = riskResult.value;
-      setPropertyRisks(propsWithRisk.map(buildRisk).sort((a, b) => b.riskPct - a.riskPct));
-      if (force || forecastStale) {
-        forecastCachedAt.current = Date.now();
-        fetchForecasts(propsWithRisk);
+      if (alertResult.status === 'fulfilled' && alertResult.value.ok) {
+        const data = await alertResult.value.json();
+        setAlerts(data.alerts ?? data);
       }
-    } else {
-      setForecastLoading(false);
-    }
 
-    setLoading(false);
-    setRefreshing(false);
+      if (riskResult.status === 'fulfilled') {
+        const propsWithRisk = riskResult.value;
+        const risks = propsWithRisk.map(buildRisk).sort((a, b) => b.riskPct - a.riskPct);
+        setPropertyRisks(risks);
+        const hasAlert = risks.some(r => r.riskLevel === 'critical' || r.riskLevel === 'warning');
+        syncAppIcon(hasAlert);
+        if (force || forecastStale) {
+          setForecastCachedAt(Date.now());
+          fetchForecasts(propsWithRisk);
+        }
+      } else {
+        setForecastLoading(false);
+      }
+    } finally {
+      setLoading(false);
+      setRefreshing(false);
+      setIsSyncing(false);
+    }
   };
 
   useFocusEffect(useCallback(() => { fetchData(); }, []));
@@ -347,8 +373,15 @@ export default function HomeScreen() {
         <Text style={[styles.forecastEmpty, { color: stateText }]}>暫無預報資料</Text>
       );
     }
-    const ICON = ['☀️', '🌦️', '🌧️', '⛈️'];
-    const getIcon = (pop: number) => pop < 20 ? ICON[0] : pop < 50 ? ICON[1] : pop < 70 ? ICON[2] : ICON[3];
+    const getIcon = (pop: number | null) =>
+      pop === null || pop < 20 ? '☀️' : pop < 50 ? '🌦️' : pop < 70 ? '🌧️' : '⛈️';
+
+    const formatForecast = (pop: number | null, temp: number | null): string => {
+      if (pop !== null && temp !== null) return `降雨機率 ${pop}%・${temp}°C`;
+      if (pop !== null) return `降雨機率 ${pop}%`;
+      if (temp !== null) return `氣溫 ${temp}°C`;
+      return '暫無資料';
+    };
 
     return (
       <View style={styles.forecastGroup}>
@@ -362,7 +395,7 @@ export default function HomeScreen() {
                   {f.name}{district ? `（${district}）` : ''}
                 </Text>
                 <Text style={[styles.forecastPop, { color: stateText }]}>
-                  未來 6 小時降雨機率 {f.maxPop6h}%
+                  {formatForecast(f.maxPop6h, f.temperature)}
                 </Text>
               </View>
             </View>
@@ -459,6 +492,9 @@ export default function HomeScreen() {
           <Text style={[styles.sectionHeaderText, { color: stateText }]}>
             財產所在地降雨預報
           </Text>
+          {isSyncing && (
+            <ActivityIndicator size="small" color={stateText} style={{ marginLeft: 'auto', opacity: 0.5 }} />
+          )}
         </View>
         {renderForecast()}
       </View>

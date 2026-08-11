@@ -46,9 +46,10 @@ export async function registerForPushNotifications(): Promise<void> {
 
   // Android 需要先建 notification channel
   if (Platform.OS === 'android') {
-    await Notifications.setNotificationChannelAsync('default', {
-      name: '水先知',
+    await Notifications.setNotificationChannelAsync('flood-alerts', {
+      name: '水先知警報',
       importance: Notifications.AndroidImportance.MAX,
+      sound: 'default',
       vibrationPattern: [0, 250, 250, 250],
       lightColor: '#2E75B6',
     });

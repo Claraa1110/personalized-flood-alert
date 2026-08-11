@@ -7,7 +7,7 @@ from shapely.geometry import Point
 from app.dependencies import get_db
 from app.models.property import Property
 from app.schemas.property import PropertyCreate, PropertyResponse
-from app.auth import CurrentUser, get_current_user
+from app.auth import get_device_id
 
 router = APIRouter()
 
@@ -104,7 +104,7 @@ async def lookup_district_and_risk(db: AsyncSession, lat: float, lng: float):
 async def create_property(
     property_data: PropertyCreate,
     db: AsyncSession = Depends(get_db),
-    user: CurrentUser = Depends(get_current_user),
+    device_id: str = Depends(get_device_id),
 ):
     location = from_shape(
         Point(property_data.longitude, property_data.latitude), srid=4326
@@ -114,7 +114,7 @@ async def create_property(
     )
 
     prop = Property(
-        user_id=UUID(user.user_id),
+        device_id=device_id,
         name=property_data.name,
         type=property_data.type,
         location=location,
@@ -134,10 +134,10 @@ async def create_property(
 @router.get("/properties", response_model=list[PropertyResponse])
 async def list_properties(
     db: AsyncSession = Depends(get_db),
-    user: CurrentUser = Depends(get_current_user),
+    device_id: str = Depends(get_device_id),
 ):
     result = await db.execute(
-        select(Property).where(Property.user_id == UUID(user.user_id))
+        select(Property).where(Property.device_id == device_id)
     )
     props = result.scalars().all()
     responses = []
@@ -152,12 +152,12 @@ async def list_properties(
 async def get_property(
     property_id: UUID,
     db: AsyncSession = Depends(get_db),
-    user: CurrentUser = Depends(get_current_user),
+    device_id: str = Depends(get_device_id),
 ):
     result = await db.execute(
         select(Property).where(
             Property.id == property_id,
-            Property.user_id == UUID(user.user_id),
+            Property.device_id == device_id,
         )
     )
     prop = result.scalar_one_or_none()
@@ -173,12 +173,12 @@ async def update_property(
     property_id: UUID,
     property_data: PropertyCreate,
     db: AsyncSession = Depends(get_db),
-    user: CurrentUser = Depends(get_current_user),
+    device_id: str = Depends(get_device_id),
 ):
     result = await db.execute(
         select(Property).where(
             Property.id == property_id,
-            Property.user_id == UUID(user.user_id),
+            Property.device_id == device_id,
         )
     )
     prop = result.scalar_one_or_none()
@@ -210,12 +210,12 @@ async def update_property(
 async def delete_property(
     property_id: UUID,
     db: AsyncSession = Depends(get_db),
-    user: CurrentUser = Depends(get_current_user),
+    device_id: str = Depends(get_device_id),
 ):
     result = await db.execute(
         select(Property).where(
             Property.id == property_id,
-            Property.user_id == UUID(user.user_id),
+            Property.device_id == device_id,
         )
     )
     prop = result.scalar_one_or_none()

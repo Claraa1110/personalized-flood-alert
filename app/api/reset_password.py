@@ -40,11 +40,12 @@ _HTML = """<!DOCTYPE html>
       text-align: center;
       margin-bottom: 28px;
     }
-    .logo-drop {
-      font-size: 52px;
-      line-height: 1;
+    .logo-img {
+      width: 80px;
+      height: 80px;
+      border-radius: 18px;
       display: block;
-      margin-bottom: 10px;
+      margin: 0 auto 10px;
     }
     .logo-name {
       font-size: 22px;
@@ -185,7 +186,7 @@ _HTML = """<!DOCTYPE html>
 <body>
 <div class="card">
   <div class="logo">
-    <span class="logo-drop">💧</span>
+    <img src="/privacy-icon.png" class="logo-img" alt="水先知" />
     <div class="logo-name">水先知</div>
     <div class="logo-sub">守護你的財產安全</div>
   </div>

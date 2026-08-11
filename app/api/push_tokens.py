@@ -3,7 +3,7 @@ from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import text
 from app.dependencies import get_db
-from app.auth import CurrentUser, get_current_user
+from app.auth import get_device_id
 from app.push import send_push_notifications
 
 router = APIRouter()
@@ -17,21 +17,20 @@ class PushTokenBody(BaseModel):
 async def register_push_token(
     body: PushTokenBody,
     db: AsyncSession = Depends(get_db),
-    user: CurrentUser = Depends(get_current_user),
+    device_id: str = Depends(get_device_id),
 ):
     token = body.push_token.strip()
     if not token.startswith("ExponentPushToken["):
         raise HTTPException(status_code=400, detail="無效的 Expo Push Token 格式")
 
-    # INSERT ... ON CONFLICT (user_id, push_token) DO UPDATE updated_at
     await db.execute(
         text("""
-            INSERT INTO push_tokens (id, user_id, push_token, created_at, updated_at)
-            VALUES (gen_random_uuid(), :user_id, :token, NOW(), NOW())
-            ON CONFLICT (user_id, push_token)
+            INSERT INTO push_tokens (id, user_id, device_id, push_token, created_at, updated_at)
+            VALUES (gen_random_uuid(), gen_random_uuid(), :device_id, :token, NOW(), NOW())
+            ON CONFLICT (device_id, push_token) WHERE device_id IS NOT NULL
             DO UPDATE SET updated_at = NOW()
         """),
-        {"user_id": user.user_id, "token": token},
+        {"device_id": device_id, "token": token},
     )
     await db.commit()
     return {"message": "push token 已儲存"}
@@ -40,20 +39,19 @@ async def register_push_token(
 @router.post("/test-push")
 async def test_push(
     db: AsyncSession = Depends(get_db),
-    user: CurrentUser = Depends(get_current_user),
+    device_id: str = Depends(get_device_id),
 ):
-    """對當前登入使用者的所有裝置發一則測試推播。"""
     rows = await db.execute(
-        text("SELECT push_token FROM push_tokens WHERE user_id = :uid"),
-        {"uid": user.user_id},
+        text("SELECT push_token FROM push_tokens WHERE device_id = :device_id"),
+        {"device_id": device_id},
     )
     tokens = [r.push_token for r in rows.fetchall()]
     if not tokens:
-        raise HTTPException(status_code=404, detail="找不到此使用者的推播 token，請先在實體裝置登入 App")
+        raise HTTPException(status_code=404, detail="找不到此裝置的推播 token，請先在實體裝置開啟 App")
 
     pref = (await db.execute(
-        text("SELECT notify_enabled, sound_enabled FROM user_notification_settings WHERE user_id = :uid"),
-        {"uid": user.user_id},
+        text("SELECT notify_enabled, sound_enabled FROM user_notification_settings WHERE device_id = :device_id"),
+        {"device_id": device_id},
     )).fetchone()
     notify_enabled = pref.notify_enabled if pref else True
     sound_enabled = pref.sound_enabled if pref else True

@@ -1,7 +1,6 @@
 import { useState, useEffect } from 'react';
-import { View, Text, StyleSheet, TouchableOpacity, Alert, Switch, ActivityIndicator, Linking } from 'react-native';
+import { View, Text, StyleSheet, TouchableOpacity, Switch, ActivityIndicator, Linking } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
-import { useAuth } from '../context/AuthContext';
 import { apiFetch } from '../lib/api';
 
 type IconName = React.ComponentProps<typeof Ionicons>['name'];
@@ -56,10 +55,10 @@ function LinkRow({
 }
 
 export default function SettingsScreen() {
-  const { session, signOut } = useAuth();
   const [notifyEnabled, setNotifyEnabled] = useState(true);
   const [soundEnabled, setSoundEnabled] = useState(true);
   const [loading, setLoading] = useState(true);
+
   useEffect(() => {
     apiFetch('/api/notification-settings')
       .then(r => r.json())
@@ -89,31 +88,10 @@ export default function SettingsScreen() {
     saveSettings(notifyEnabled, value);
   };
 
-  const handleSignOut = () => {
-    Alert.alert('登出', '確定要登出嗎？', [
-      { text: '取消', style: 'cancel' },
-      { text: '登出', style: 'destructive', onPress: signOut },
-    ]);
-  };
-
   return (
     <View style={styles.container}>
-      {/* 帳號資訊 */}
-      <Text style={styles.sectionTitle}>帳號</Text>
-      <View style={styles.card}>
-        <View style={styles.accountRow}>
-          <View style={styles.avatarCircle}>
-            <Ionicons name="person" size={22} color="#2E75B6" />
-          </View>
-          <View style={styles.accountInfo}>
-            <Text style={styles.accountEmail}>{session?.user?.email ?? '—'}</Text>
-            <Text style={styles.accountSub}>已登入</Text>
-          </View>
-        </View>
-      </View>
-
       {/* 通知偏好 */}
-      <Text style={[styles.sectionTitle, { marginTop: 20 }]}>通知偏好</Text>
+      <Text style={styles.sectionTitle}>通知偏好</Text>
       <View style={styles.card}>
         <PrefRow
           icon="notifications-outline"
@@ -143,12 +121,6 @@ export default function SettingsScreen() {
         />
       </View>
 
-      {/* 登出 */}
-      <TouchableOpacity style={styles.signOutBtn} onPress={handleSignOut}>
-        <Ionicons name="log-out-outline" size={18} color="#C00000" />
-        <Text style={styles.signOutText}>登出</Text>
-      </TouchableOpacity>
-
       <Text style={styles.version}>版本 1.0.0</Text>
     </View>
   );
@@ -168,15 +140,6 @@ const styles = StyleSheet.create({
     shadowOpacity: 0.06, shadowRadius: 6, elevation: 3,
   },
 
-  accountRow: { flexDirection: 'row', alignItems: 'center', gap: 14, padding: 16 },
-  avatarCircle: {
-    width: 44, height: 44, borderRadius: 22,
-    backgroundColor: '#EBF3FB', alignItems: 'center', justifyContent: 'center',
-  },
-  accountInfo: { flex: 1 },
-  accountEmail: { fontSize: 15, fontWeight: '600', color: '#1A1A2E' },
-  accountSub:   { fontSize: 12, color: '#27AE60', marginTop: 2 },
-
   row: {
     flexDirection: 'row', alignItems: 'center',
     justifyContent: 'space-between',
@@ -189,13 +152,6 @@ const styles = StyleSheet.create({
     backgroundColor: '#EBF3FB', alignItems: 'center', justifyContent: 'center',
   },
   rowLabel: { fontSize: 15, color: '#1A1A2E' },
-
-  signOutBtn: {
-    flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 8,
-    marginTop: 24, paddingVertical: 14, borderRadius: 14,
-    backgroundColor: '#FFF0F0', borderWidth: 1.5, borderColor: '#FFCCCC',
-  },
-  signOutText: { fontSize: 15, color: '#C00000', fontWeight: '600' },
 
   version: { textAlign: 'center', fontSize: 12, color: '#ccc', marginTop: 20 },
 });

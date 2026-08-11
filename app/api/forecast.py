@@ -69,6 +69,43 @@ async def _fetch_county_locations(county_name: str) -> list:
     return locations
 
 
+def _get_temperature(location: dict) -> Optional[int]:
+    """
+    從 Location 取當前或最近時段的溫度（°C）。
+    溫度用 DataTime（每小時一筆），取第一筆不早於現在的值。
+    """
+    now = datetime.now(tz=TZ_8)
+
+    temp_el = next(
+        (el for el in location.get("WeatherElement", [])
+         if el.get("ElementName") == "溫度"),
+        None,
+    )
+    if not temp_el:
+        return None
+
+    last_val: Optional[int] = None
+    for entry in temp_el.get("Time", []):
+        dt_str = entry.get("DataTime", "")
+        try:
+            dt = datetime.fromisoformat(dt_str)
+        except ValueError:
+            continue
+
+        for ev in (entry.get("ElementValue") or [{}]):
+            raw = ev.get("Temperature")
+            if raw is not None and raw not in ("-", ""):
+                try:
+                    val = int(float(raw))
+                    last_val = val
+                    if dt >= now:
+                        return val  # 第一筆不早於現在的溫度
+                except (ValueError, TypeError):
+                    pass
+
+    return last_val  # fallback：最後一筆有效值
+
+
 def _get_pop_6h(location: dict) -> Optional[int]:
     """
     從 Location 取「未來 6 小時降雨機率」。
@@ -130,7 +167,7 @@ async def get_forecast(
     row = result.fetchone()
 
     if not row:
-        return {"district_name": None, "max_pop_6h": None, "summary": "查無對應行政區"}
+        return {"district_name": None, "max_pop_6h": None, "temperature": None, "summary": "查無對應行政區"}
 
     town_name = row.town_name
     county_name = row.county_name
@@ -140,10 +177,10 @@ async def get_forecast(
     except HTTPException:
         raise
     except Exception:
-        return {"district_name": town_name, "max_pop_6h": None, "summary": "暫無預報資料"}
+        return {"district_name": town_name, "max_pop_6h": None, "temperature": None, "summary": "暫無預報資料"}
 
     if not locations:
-        return {"district_name": town_name, "max_pop_6h": None, "summary": "暫無預報資料"}
+        return {"district_name": town_name, "max_pop_6h": None, "temperature": None, "summary": "暫無預報資料"}
 
     # 找對應鄉鎮
     town_loc = next(
@@ -154,10 +191,12 @@ async def get_forecast(
         town_loc = locations[0]  # fallback 到縣市第一個鄉鎮
 
     pop = _get_pop_6h(town_loc)
+    temperature = _get_temperature(town_loc)
     summary = f"未來 6 小時降雨機率最高 {pop}%" if pop is not None else "暫無預報資料"
 
     return {
         "district_name": town_name,
         "max_pop_6h": pop,
+        "temperature": temperature,
         "summary": summary,
     }

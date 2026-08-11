@@ -53,7 +53,8 @@
           "sounds": []
         }
       ],
-      "expo-font"
+      "expo-font",
+      "./plugins/withDynamicIcon"
     ],
     "extra": {
       "eas": {

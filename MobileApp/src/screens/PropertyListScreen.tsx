@@ -98,8 +98,9 @@ export default function PropertyListScreen() {
 
       if (riskResult.status === 'fulfilled') {
         setProperties(riskResult.value);
-      } else {
-        throw new Error('無法載入財產');
+      } else if (getCachedProperties().length === 0) {
+        // 有快取時靜默失敗，保留已顯示的資料；無資料才顯示錯誤
+        throw new Error('無法載入財產，請稍後再試');
       }
 
       if (alertResp.status === 'fulfilled' && alertResp.value.ok) {

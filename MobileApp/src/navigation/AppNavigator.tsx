@@ -1,6 +1,5 @@
 import { useState, useEffect, useCallback } from 'react';
 import { View, ActivityIndicator, AppState } from 'react-native';
-import * as Notifications from 'expo-notifications';
 import { NavigationContainer } from '@react-navigation/native';
 import { createBottomTabNavigator } from '@react-navigation/bottom-tabs';
 import { Ionicons } from '@expo/vector-icons';
@@ -8,11 +7,9 @@ import HomeScreen from '../screens/HomeScreen';
 import PropertyListScreen from '../screens/PropertyListScreen';
 import AlertScreen from '../screens/AlertScreen';
 import SettingsScreen from '../screens/SettingsScreen';
-import LoginScreen from '../screens/LoginScreen';
-import RegisterScreen from '../screens/RegisterScreen';
-import ForgotPasswordScreen from '../screens/ForgotPasswordScreen';
-import { AuthProvider, useAuth } from '../context/AuthContext';
 import { apiFetch } from '../lib/api';
+import { getDeviceId } from '../lib/deviceId';
+import { loadPersistedProperties } from '../lib/propertyCache';
 import { registerForPushNotifications, updateBadgeCount } from '../lib/notifications';
 
 const Tab = createBottomTabNavigator();
@@ -70,37 +67,33 @@ function MainTabs() {
   );
 }
 
-function AuthStack() {
-  const [screen, setScreen] = useState<'login' | 'register' | 'forgot'>('login');
-  if (screen === 'register') return <RegisterScreen onGoLogin={() => setScreen('login')} />;
-  if (screen === 'forgot')   return <ForgotPasswordScreen onGoLogin={() => setScreen('login')} />;
-  return <LoginScreen onGoRegister={() => setScreen('register')} onGoForgot={() => setScreen('forgot')} />;
-}
-
 function RootNavigator() {
-  const { session, loading } = useAuth();
+  const [ready, setReady] = useState(false);
 
-  // 登入後：註冊推播 token + 更新 badge；登出後：清除 badge
   useEffect(() => {
-    if (session) {
+    async function init() {
+      try {
+        await getDeviceId();
+        await loadPersistedProperties();
+      } catch (e) {
+        console.warn('[Init] startup error:', e);
+      } finally {
+        setReady(true);
+      }
       registerForPushNotifications();
-      updateBadgeCount();
-    } else {
-      Notifications.setBadgeCountAsync(0);
     }
-  }, [session?.user?.id]);
+    init();
+  }, []);
 
   // App 從背景回到前景時更新 badge
   useEffect(() => {
     const sub = AppState.addEventListener('change', (state) => {
-      if (state === 'active' && session) {
-        updateBadgeCount();
-      }
+      if (state === 'active') updateBadgeCount();
     });
     return () => sub.remove();
-  }, [session]);
+  }, []);
 
-  if (loading) {
+  if (!ready) {
     return (
       <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center', backgroundColor: '#F0F4F8' }}>
         <ActivityIndicator size="large" color="#2E75B6" />
@@ -110,15 +103,11 @@ function RootNavigator() {
 
   return (
     <NavigationContainer>
-      {session ? <MainTabs /> : <AuthStack />}
+      <MainTabs />
     </NavigationContainer>
   );
 }
 
 export default function AppNavigator() {
-  return (
-    <AuthProvider>
-      <RootNavigator />
-    </AuthProvider>
-  );
+  return <RootNavigator />;
 }

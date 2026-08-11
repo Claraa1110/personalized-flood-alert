@@ -3,7 +3,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import text
 from app.dependencies import get_db
 from uuid import UUID
-from app.auth import CurrentUser, get_current_user
+from app.auth import get_device_id
 
 router = APIRouter()
 
@@ -11,9 +11,8 @@ router = APIRouter()
 @router.get("/alerts")
 async def get_alerts(
     db: AsyncSession = Depends(get_db),
-    user: CurrentUser = Depends(get_current_user),
+    device_id: str = Depends(get_device_id),
 ):
-    """查詢使用者所有財產的警報列表"""
     result = await db.execute(
         text("""
             SELECT
@@ -27,11 +26,11 @@ async def get_alerts(
                 p.address as property_address
             FROM alerts a
             JOIN properties p ON a.property_id = p.id
-            WHERE p.user_id = :user_id
+            WHERE p.device_id = :device_id
             ORDER BY a.created_at DESC
             LIMIT 50
         """),
-        {"user_id": user.user_id},
+        {"device_id": device_id},
     )
     rows = result.fetchall()
     return {
@@ -57,9 +56,8 @@ async def get_alerts(
 async def get_alert_detail(
     alert_id: UUID,
     db: AsyncSession = Depends(get_db),
-    user: CurrentUser = Depends(get_current_user),
+    device_id: str = Depends(get_device_id),
 ):
-    """查詢單一警報詳情"""
     result = await db.execute(
         text("""
             SELECT
@@ -70,18 +68,16 @@ async def get_alert_detail(
             FROM alerts a
             JOIN properties p ON a.property_id = p.id
             WHERE a.id = :alert_id
-            AND p.user_id = :user_id
+            AND p.device_id = :device_id
         """),
-        {"alert_id": str(alert_id), "user_id": user.user_id},
+        {"alert_id": str(alert_id), "device_id": device_id},
     )
     row = result.fetchone()
     if not row:
         raise HTTPException(status_code=404, detail="找不到這個警報")
 
     await db.execute(
-        text(
-            "UPDATE alerts SET read_at = NOW() WHERE id = :alert_id AND read_at IS NULL"
-        ),
+        text("UPDATE alerts SET read_at = NOW() WHERE id = :alert_id AND read_at IS NULL"),
         {"alert_id": str(alert_id)},
     )
     await db.commit()
@@ -101,18 +97,17 @@ async def get_alert_detail(
 @router.post("/alerts/mark-all-read")
 async def mark_all_read(
     db: AsyncSession = Depends(get_db),
-    user: CurrentUser = Depends(get_current_user),
+    device_id: str = Depends(get_device_id),
 ):
-    """把該使用者所有未讀警報標記為已讀"""
     await db.execute(
         text("""
             UPDATE alerts SET read_at = NOW()
             WHERE read_at IS NULL
             AND property_id IN (
-                SELECT id FROM properties WHERE user_id = :user_id
+                SELECT id FROM properties WHERE device_id = :device_id
             )
         """),
-        {"user_id": user.user_id},
+        {"device_id": device_id},
     )
     await db.commit()
     return {"message": "已標記全部已讀"}
@@ -120,9 +115,7 @@ async def mark_all_read(
 
 @router.post("/alerts/evaluate")
 async def trigger_evaluation():
-    """手動觸發風險評估（測試用）"""
     from app.services.risk_engine import evaluate_all_properties
-
     await evaluate_all_properties()
     return {"message": "風險評估完成"}
 
@@ -130,24 +123,21 @@ async def trigger_evaluation():
 @router.post("/alerts/seed-test")
 async def seed_test_alerts(
     db: AsyncSession = Depends(get_db),
-    user: CurrentUser = Depends(get_current_user),
+    device_id: str = Depends(get_device_id),
 ):
-    """插入測試警報（UI 測試用，不發 push）"""
     import json as _json
     from uuid import uuid4
 
-    # 取該使用者前 3 個財產
     rows = (await db.execute(text("""
         SELECT id, name FROM properties
-        WHERE user_id = :uid
+        WHERE device_id = :device_id
         ORDER BY created_at
         LIMIT 3
-    """), {"uid": user.user_id})).fetchall()
+    """), {"device_id": device_id})).fetchall()
 
     if not rows:
         return {"inserted": 0, "message": "沒有財產可以綁定"}
 
-    # 循環補足 3 個（財產不夠就重複第一個）
     def pick(i):
         return rows[i] if i < len(rows) else rows[0]
 
@@ -184,13 +174,12 @@ async def seed_test_alerts(
 @router.delete("/alerts/seed-test")
 async def delete_test_alerts(
     db: AsyncSession = Depends(get_db),
-    user: CurrentUser = Depends(get_current_user),
+    device_id: str = Depends(get_device_id),
 ):
-    """清除 seed-test 插入的測試警報"""
     result = await db.execute(text("""
         DELETE FROM alerts
-        WHERE property_id IN (SELECT id FROM properties WHERE user_id = :uid)
+        WHERE property_id IN (SELECT id FROM properties WHERE device_id = :device_id)
         AND message ~ '雨量 (68\\.5|32\\.0|102\\.0)mm'
-    """), {"uid": user.user_id})
+    """), {"device_id": device_id})
     await db.commit()
     return {"deleted": result.rowcount, "message": f"已清除 {result.rowcount} 筆測試警報"}
