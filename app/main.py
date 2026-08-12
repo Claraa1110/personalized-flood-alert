@@ -1,11 +1,7 @@
 import asyncio
-import os
-import math
 from contextlib import asynccontextmanager
-from datetime import datetime
 
-import httpx
-from fastapi import FastAPI, Query, HTTPException
+from fastapi import FastAPI
 from dotenv import load_dotenv
 from app.api.test import router as test_router
 from app.api.properties import router as properties_router
@@ -21,6 +17,7 @@ from app.api.notification_settings import router as notification_settings_router
 from app.api.properties_risk import router as properties_risk_router
 from app.api.reset_password import router as reset_password_router
 from app.api.privacy import router as privacy_router
+from app.api.health import router as health_router
 from app.scheduler import setup_scheduler
 from app.services.cwa_service import fetch_rainfall_stations
 
@@ -58,78 +55,4 @@ app.include_router(notification_settings_router, prefix="/api")
 app.include_router(properties_risk_router, prefix="/api")
 app.include_router(reset_password_router)
 app.include_router(privacy_router)
-
-
-def haversine(lat1: float, lon1: float, lat2: float, lon2: float) -> float:
-    R = 6371
-    dlat = math.radians(lat2 - lat1)
-    dlon = math.radians(lon2 - lon1)
-    a = (
-        math.sin(dlat / 2) ** 2
-        + math.cos(math.radians(lat1))
-        * math.cos(math.radians(lat2))
-        * math.sin(dlon / 2) ** 2
-    )
-    return R * 2 * math.asin(math.sqrt(a))
-
-
-@app.get("/health")
-def health():
-    return {"status": "ok"}
-
-
-@app.get("/health/scheduler")
-def scheduler_health():
-    from app.services.cwa_service import last_rainfall_update
-
-    if last_rainfall_update is None:
-        return {"status": "no_data", "minutes_since_last_update": None}
-    minutes = (datetime.now() - last_rainfall_update).total_seconds() / 60
-    return {"status": "ok", "minutes_since_last_update": round(minutes, 1)}
-
-
-@app.get("/api/test-rainfall")
-async def test_rainfall(lat: float = Query(...), lng: float = Query(...)):
-    api_key = os.getenv("CWA_API_KEY")
-    url = "https://opendata.cwa.gov.tw/api/v1/rest/datastore/O-A0002-001"
-
-    async with httpx.AsyncClient(timeout=10, verify=False) as client:
-        resp = await client.get(
-            url, params={"Authorization": api_key, "format": "JSON"}
-        )
-        resp.raise_for_status()
-        data = resp.json()
-
-    stations = data.get("records", {}).get("Station", [])
-    if not stations:
-        raise HTTPException(status_code=404, detail="No stations found")
-
-    nearest = None
-    min_dist = float("inf")
-
-    for s in stations:
-        try:
-            coords = s["GeoInfo"]["Coordinates"]
-            wgs84 = next(c for c in coords if c["CoordinateName"] == "WGS84")
-            slat = float(wgs84["StationLatitude"])
-            slng = float(wgs84["StationLongitude"])
-        except (KeyError, StopIteration, ValueError):
-            continue
-
-        dist = haversine(lat, lng, slat, slng)
-        if dist < min_dist:
-            min_dist = dist
-            nearest = s
-
-    if not nearest:
-        raise HTTPException(status_code=404, detail="No valid stations found")
-
-    rainfall = nearest["RainfallElement"]["Now"]["Precipitation"]
-    observed_at = nearest["ObsTime"]["DateTime"]
-
-    return {
-        "station_name": nearest["StationName"],
-        "distance_km": round(min_dist, 2),
-        "rainfall_mm": float(rainfall) if rainfall != -99 else 0.0,
-        "observed_at": observed_at,
-    }
+app.include_router(health_router)
