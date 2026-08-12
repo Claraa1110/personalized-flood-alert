@@ -41,4 +41,4 @@ yarn-error.*
 /android
 
 # 外部資料檔案
-data/
+data/google-services.json
