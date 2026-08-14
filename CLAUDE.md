@@ -212,10 +212,15 @@ op.drop_table('user_notification_settings')               # 所有使用者的�
 ## 提交前檢查
 
 ```bash
-uv run ruff check . && uv run ruff format --check . && uv run pytest
+uv run ruff check . && uv run ruff format --check tests/ && uv run pytest
 ```
 
-⚠️ **CI 目前只做部署、不跑測試**（ROADMAP P0-8）。
-在補上 test gate 之前，上面這行必須手動執行。
+這三項就是 CI 會跑的內容（`.github/workflows/ci.yml`）。
 
-推送到 `main` 會**直接部署到正式環境**。
+- `ruff format` 目前只對 `tests/` 強制；`app/` 與 `scripts/` 的排版清理是
+  獨立的待辦（ROADMAP P2-13）
+- `pyproject.toml` 的 `per-file-ignores` 是一份 **ratchet 清單**——列出既有
+  程式碼尚未滿足的規則。**只能變短，不要往裡面加東西**。新程式碼受完整規則集
+  保護，例如新增 `verify=False` 會被 `S501` 立刻擋下
+
+⚠️ 推送到 `main` 會**自動部署到正式環境**（現在會先等 CI 通過）。

@@ -314,47 +314,35 @@ WHERE observed_at >= NOW() - INTERVAL '2 hours'
 
 ---
 
-### P0-8　CI 直接部署，沒有任何檢查
+### ✅ P0-8　CI 直接部署，沒有任何檢查（已完成）
 
-**檔案**：`.github/workflows/fly-deploy.yml`
+**檔案**：`.github/workflows/ci.yml`（新增）、`.github/workflows/fly-deploy.yml`
 
-```yaml
-on:
-  push:
-    branches: [main, master]
-jobs:
-  deploy:
-    steps:
-      - uses: actions/checkout@v4
-      - uses: superfly/flyctl-actions/setup-flyctl@master
-      - run: flyctl deploy --remote-only
-```
+**原本的問題**：push 到 main 就直接上線。沒有測試、沒有 lint、沒有 migration
+檢查。P0-0 補的測試如果沒有進 CI，很快就會腐爛。另外
+`superfly/flyctl-actions@master` 是浮動 ref——第三方 action 的任意 commit
+都會在有 `FLY_API_TOKEN` 的環境裡執行。
 
-push 到 main 就直接上線。沒有測試、沒有 lint、沒有型別檢查、沒有
-migration 檢查。P0-0 補的測試如果沒有進 CI，很快就會腐爛。
+**已完成的內容**：
 
-另外 `superfly/flyctl-actions@master` 是浮動 ref——第三方 action 的
-任意 commit 都會在有 `FLY_API_TOKEN` 的環境裡執行。應 pin 到 SHA。
+- 新增 `ci.yml`，在 **每個 PR** 與 push 到 main 時執行：
+  - `lint` — `ruff check .`（全 repo）+ `ruff format --check tests/`
+  - `test` — `pytest --cov-fail-under=45`，上傳 junit / coverage 報告
+  - `migrations` — 對真實 `postgis/postgis` 容器跑 `alembic upgrade head`
+    + `alembic check`
+- `fly-deploy.yml` 改為 `needs: ci`（透過 `workflow_call` 重用，不複製設定），
+  **測試沒過就不會部署**
+- `superfly/flyctl-actions` pin 到 commit SHA；`actions/checkout` 升到 v7
+- 兩個 workflow 都加上 `permissions: contents: read`（最小權限）
+- 加上 `concurrency` 群組，新的 push 會取消同分支上還在跑的舊 run
 
-**建議**：
+**兩個刻意的取捨**：
 
-```yaml
-jobs:
-  test:
-    steps:
-      - uses: actions/checkout@v4
-      - uses: astral-sh/setup-uv@<sha>
-      - run: uv sync --frozen
-      - run: uv run ruff check .
-      - run: uv run ruff format --check .
-      - run: uv run pytest --cov=app --cov-fail-under=70
-  deploy:
-    needs: test          # ← 關鍵
-    if: github.ref == 'refs/heads/main'
-```
-
-另外加一個 PR 觸發的 workflow（目前只在 push 時跑），以及
-`alembic check`（偵測 model 與 migration 不同步，見 P1-1）。
+1. `--cov-fail-under=45` 是**地板**（實際 48%），不是目標。用來防止退步，
+   隨 ROADMAP 推進應逐步調高。
+2. `migrations` job 設為 `continue-on-error: true`，因為 P1-1 尚未修復、
+   `alembic check` 現在必然失敗。它的作用是讓那個偏離**持續可見**。
+   **修好 P1-1 後請移除這個標記**，讓 schema drift 變成硬性失敗。
 
 **驗收**：故意讓一個測試失敗，確認 deploy job 被擋下。
 
@@ -785,6 +773,28 @@ HTML 以字串替換注入設定值，雖然目前的值不含特殊字元，但
 `/api/alerts/evaluate`（會發推播）、`/api/rainfall`（會下載 250k 值的 XML）
 都可以被無限呼叫。**建議**：以 `slowapi` 或 Fly 層的限流做基本防護。
 
+### P2-13　Lint / format 的 ratchet 清單
+**檔案**：`pyproject.toml` 的 `[tool.ruff.lint.per-file-ignores]`
+
+導入 CI（P0-8）時，既有程式碼有 180 個 lint violation。為了不讓那個 PR 夾帶
+上千行的機械式改寫，這些規則被逐檔列進 ratchet 清單，**新程式碼則從第一天起
+就受完整規則集保護**。
+
+待清理的項目：
+
+| 規則 | 數量 | 性質 |
+|------|------|------|
+| `I001` 匯入排序 | 62 | 純機械式，`ruff check --fix` 可自動處理 |
+| `UP045` `Optional[X]` → `X \| None` | 72 | 純機械式，可自動處理 |
+| `B904` `raise ... from` | 8 | 需人工判斷，會改善錯誤追蹤品質 |
+| `ruff format` | 42 檔 / 約 2,300 行 | 純排版；建議獨立成一個 PR，並加進 `.git-blame-ignore-revs` |
+
+`S501`（TLS 驗證關閉）與 `S314`（標準庫解析外部 XML）也在清單上，
+但它們是**真實的安全問題**，歸屬 P1-2，不是單純的風格清理。
+
+**建議**：先做自動可修的部分（一個純機械式的 PR），再處理 `B904`。
+排版留到最後，或乾脆等 P1 的重構完成後一次做完。
+
 ---
 
 ## P3 — 後續投資
@@ -803,7 +813,7 @@ HTML 以字串替換注入設定值，雖然目前的值不含特殊字元，但
 ## 建議執行順序
 
 ```
-第 1 週   P0-0 ✅ 測試　→　P0-8 CI gate　→　P0-2 部署設定（讓排程真的會跑）
+第 1 週   P0-0 ✅ 測試　→　P0-8 ✅ CI gate　→　P0-2 部署設定（讓排程真的會跑）
 第 2 週   P0-7 時區　→　P0-4 缺測值　→　P0-3 unknown 狀態
 第 3 週   P0-1 身分驗證　→　P0-6 移除除錯端點
 第 4 週   P0-5 健康檢查與可觀測性　→　P1-1 alembic 地雷　→　P1-2 TLS

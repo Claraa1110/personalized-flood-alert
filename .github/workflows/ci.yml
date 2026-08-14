@@ -1,0 +1,122 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main, master]
+  # Called by fly-deploy.yml so that a deploy cannot start unless CI passed.
+  workflow_call:
+
+# A new push to the same branch cancels the previous run.
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  lint:
+    name: Lint
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Set up uv
+        uses: astral-sh/setup-uv@v10
+        with:
+          enable-cache: true
+          cache-dependency-glob: uv.lock
+
+      - run: uv sync --frozen --group dev
+
+      # Repo-wide. Rules the legacy code does not satisfy yet are listed as an
+      # explicit, shrinking ratchet in pyproject.toml, so new code is held to
+      # the full rule set from day one.
+      - name: ruff check
+        run: uv run ruff check --output-format=github .
+
+      # Formatting is only enforced on tests/ for now: running the formatter
+      # over app/ + scripts/ would rewrite 42 files (~2,300 lines) and is a
+      # separate cosmetic PR. ROADMAP P2-13.
+      - name: ruff format
+        run: uv run ruff format --check tests/
+
+  test:
+    name: Test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Set up uv
+        uses: astral-sh/setup-uv@v10
+        with:
+          enable-cache: true
+          cache-dependency-glob: uv.lock
+
+      - run: uv sync --frozen --group dev
+
+      # The suite needs no database, no network and no API keys; conftest.py
+      # sets placeholder env vars before importing app.*. If a test ever starts
+      # needing a real service, it belongs in an integration job instead
+      # (see TESTING.md "已知缺口").
+      - name: pytest
+        run: |
+          uv run pytest \
+            --cov=app \
+            --cov-report=term-missing \
+            --cov-report=xml \
+            --cov-fail-under=45 \
+            --junitxml=junit.xml
+
+      - name: Upload test results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-results
+          path: |
+            junit.xml
+            coverage.xml
+          retention-days: 7
+          if-no-files-found: warn
+
+  migrations:
+    name: Alembic drift check
+    runs-on: ubuntu-latest
+    # ROADMAP P1-1: the ORM metadata is currently out of sync with the real
+    # schema, so `alembic check` would fail today. This job runs it for
+    # visibility without blocking the pipeline. Remove continue-on-error once
+    # P1-1 is fixed, so drift becomes a hard failure.
+    continue-on-error: true
+    services:
+      postgres:
+        image: postgis/postgis:16-3.4
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: flood_alert_ci
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+    env:
+      DATABASE_URL: postgresql://postgres:postgres@localhost:5432/flood_alert_ci
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Set up uv
+        uses: astral-sh/setup-uv@v10
+        with:
+          enable-cache: true
+          cache-dependency-glob: uv.lock
+
+      - run: uv sync --frozen --group dev
+
+      - name: alembic upgrade head
+        run: uv run alembic upgrade head
+
+      - name: Detect model/schema drift
+        run: uv run alembic check

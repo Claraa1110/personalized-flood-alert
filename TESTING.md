@@ -266,17 +266,40 @@ def test_a_404_does_not_mark_anything_read(): ...
 
 ## CI
 
-目前 `.github/workflows/fly-deploy.yml` **只做部署，不跑測試**（ROADMAP P0-8）。
-在補上 test gate 之前，這份測試套件必須靠人手動執行——
-也就是說它隨時可能已經是紅的。這件事的優先度僅次於「讓排程真的會跑」。
+`.github/workflows/ci.yml` 在 **每個 PR 與每次 push 到 main** 時執行三個 job：
 
-建議的最小 gate：
+| Job | 內容 | 會擋 merge / deploy 嗎 |
+|-----|------|------------------------|
+| `lint` | `ruff check .`（全 repo）+ `ruff format --check tests/` | ✅ 會 |
+| `test` | `pytest --cov-fail-under=45`，並上傳 junit / coverage 報告 | ✅ 會 |
+| `migrations` | 對真實 PostGIS 容器跑 `alembic upgrade head` + `alembic check` | ❌ 不會（見下） |
 
-```yaml
-- run: uv sync --frozen --group dev
-- run: uv run ruff check .
-- run: uv run pytest --cov=app --cov-fail-under=70
-```
+`.github/workflows/fly-deploy.yml` 以 `needs: ci` 呼叫這個 workflow，
+所以**測試沒過就不會部署**（ROADMAP P0-8 已完成）。
 
-覆蓋率門檻建議從 70% 起步，隨 ROADMAP 推進逐步調高。
-但請記得：**上面那張「已知缺口」表比覆蓋率數字更能說明這個系統被驗證的程度。**
+### 覆蓋率門檻是一個 ratchet
+
+`--cov-fail-under=45` 是目前實際值（48%）稍微往下取的**地板**，用來防止退步，
+不是目標。隨著 ROADMAP 推進（特別是 `risk_engine.py` 補上測試後）應該逐步調高。
+
+**請不要把這個數字當成品質指標。**
+上面那張「已知缺口」表比覆蓋率百分比更能說明這個系統被驗證的程度。
+
+### `migrations` job 目前是 `continue-on-error`
+
+因為 ROADMAP P1-1（ORM metadata 與實際 schema 已偏離）尚未修復，
+`alembic check` 現在必然失敗。這個 job 的作用是**讓那個偏離持續可見**，
+並提供一個明確的「修好了沒」判準。
+
+修好 P1-1 之後請移除 `continue-on-error: true`，讓 schema drift 變成硬性失敗。
+
+### Lint 的 ratchet
+
+`pyproject.toml` 的 `[tool.ruff.lint.per-file-ignores]` 列出既有程式碼尚未
+滿足的規則，逐檔標註對應的 ROADMAP 編號。這樣做的目的是：
+
+- **新程式碼**從第一天起就受完整規則集保護（例如新增的 `verify=False`
+  會立刻被 `S501` 擋下）
+- 導入 CI 的 PR 不需要夾帶上千行的機械式改寫
+
+**這份清單只能變短。** 每修好一項就刪掉對應的行。

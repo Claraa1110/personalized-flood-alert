@@ -70,9 +70,44 @@ ignore = [
     "S101",  # assert is expected in tests
 ]
 
+[tool.ruff.lint.flake8-bugbear]
+# FastAPI's whole dependency-injection design puts these calls in argument
+# defaults. B008 is a false positive for them, not a finding.
+extend-immutable-calls = [
+    "fastapi.Body",
+    "fastapi.Depends",
+    "fastapi.File",
+    "fastapi.Form",
+    "fastapi.Header",
+    "fastapi.Path",
+    "fastapi.Query",
+]
+
+# ── Ratchet ─────────────────────────────────────────────────────────────────
+# 既有程式碼尚未套用的規則。目的是讓**新**程式碼立刻受到規則保護，同時避免在
+# 「導入 CI」這個 PR 裡夾帶上千行的機械式改寫（那會讓 PR 無法被審查）。
+#
+# 這份清單只能變短，不能變長。每修好一項就刪掉對應的行，CI 會立刻開始要求。
 [tool.ruff.lint.per-file-ignores]
 "tests/**" = ["S105", "S106"]
-"scripts/**" = ["S", "E402"]
+
+# 純機械式改寫：匯入排序、Optional[X] -> X | None。ROADMAP P2-13
+"app/**" = ["I001", "UP"]
+"alembic/**" = ["I001", "UP"]
+
+# HTTPException 未使用 `raise ... from`，會遮蔽原始例外。ROADMAP P2-13
+"app/api/geocode.py" = ["B904"]
+
+# ⚠️ 關閉 TLS 憑證驗證（S501）與以標準庫解析外部 XML（S314）。
+# 這兩項是真實的安全問題，不是誤報——見 ROADMAP P1-2。
+# 這裡逐檔列出而非全域忽略，是為了讓**任何新增**的 verify=False 立刻被 CI 擋下。
+"app/api/forecast.py" = ["B904", "S501"]
+"app/api/test.py" = ["S501"]
+"app/services/codis_service.py" = ["S501"]
+"app/services/cwa_service.py" = ["S501", "S314"]
+
+# 一次性的匯入與校正腳本，不套用安全與風格規則。
+"scripts/**" = ["S", "E402", "I001", "UP", "B", "F841", "ASYNC"]
 
 [dependency-groups]
 dev = [

@@ -126,7 +126,6 @@ async def seed_test_alerts(
     device_id: str = Depends(get_device_id),
 ):
     import json as _json
-    from uuid import uuid4
 
     rows = (await db.execute(text("""
         SELECT id, name FROM properties
