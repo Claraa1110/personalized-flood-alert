@@ -367,10 +367,42 @@ ORM metadata 已經與實際 schema 偏離：
 
 這是一顆已經上膛的地雷，而 README 的「資料庫 Migration」章節正是教大家這樣做。
 
-**建議**：
+#### 追加發現：`alembic upgrade head` 無法在乾淨的資料庫上執行
+
+P0-8 新增的 `migrations` job 第一次跑就抓到這個問題：
+
+```
+sqlalchemy.exc.ProgrammingError: DuplicateTableError:
+relation "idx_news_articles_location_geom" already exists
+[SQL: CREATE INDEX idx_news_articles_location_geom
+      ON news_articles USING gist (location_geom)]
+```
+
+**檔案**：`alembic/versions/f06d5d47efcf_add_location_geom_to_news_articles.py`
+
+原因：GeoAlchemy2 的 `Geography` 欄位預設 `spatial_index=True`，
+`op.add_column()` 時就會**自動建立**一個名為 `idx_<table>_<column>` 的
+GiST 索引。緊接著的 `op.create_index("idx_news_articles_location_geom", ...)`
+是重複建立，因此失敗。
+
+意義比看起來嚴重：
+
+- **無法從 migration 重建資料庫**。新的 staging 環境、本機開發環境、
+  災難復原都會卡在這一步
+- 正式資料庫之所以還活著，是因為它是逐步累積出來的，不是從頭跑一次 migration
+  建出來的——換句話說，**migration chain 與正式 schema 已經是兩份不同的東西**
+- 這也讓 P1-1 的 autogenerate 問題更難處理：沒有一個乾淨的基準可以比對
+
+**建議**：移除那一行多餘的 `op.create_index`（或在 `Geography(...)` 傳入
+`spatial_index=False` 再自行建立）。已經套用過的環境不受影響——索引兩種寫法
+都存在。修好之後 `migrations` job 應該就能跑到 `alembic check` 那一步。
+
+**建議**（整體）：
 
 - 立刻補上 `rainfall_6hr` 欄位定義與 `UserNotificationSettings` model
-- 加 CI 檢查：`alembic check`（偵測 model 與 DB 不同步時 fail）
+- 修掉上述重複索引，讓 `alembic upgrade head` 能在乾淨資料庫上跑完
+- 移除 `ci.yml` 中 `migrations` job 的 `continue-on-error: true`，
+  讓 schema drift 變成硬性失敗
 - 決定唯一真實來源：既然 90% 的查詢是原生 SQL（見 P2-1），
   也可以選擇**放棄 autogenerate**、改為手寫 migration，並在 README 明講
 
