@@ -271,11 +271,33 @@ def test_a_404_does_not_mark_anything_read(): ...
 | Job | 內容 | 會擋 merge / deploy 嗎 |
 |-----|------|------------------------|
 | `lint` | `ruff check .`（全 repo）+ `ruff format --check tests/` | ✅ 會 |
-| `test` | `pytest --cov-fail-under=45`，並上傳 junit / coverage 報告 | ✅ 會 |
+| `test` | `pytest --cov-fail-under=45`，產生 job summary 並上傳報告 | ✅ 會 |
 | `migrations` | 對真實 PostGIS 容器跑 `alembic upgrade head` + `alembic check` | ❌ 不會（見下） |
 
 `.github/workflows/fly-deploy.yml` 以 `needs: ci` 呼叫這個 workflow，
 所以**測試沒過就不會部署**（ROADMAP P0-8 已完成）。
+
+### Job summary
+
+`test` job 會把結果寫進 GitHub Actions 的 **Summary** 分頁，
+不必打開 log 就能看到：
+
+- 通過 / 失敗 / xfail 的數量與執行時間
+- **安全關鍵路徑**的逐模組覆蓋率（紅黃綠標示）——這比整體平均數重要得多
+- 全部檔案的覆蓋率（收在 `<details>` 裡）
+- 目前的 xfail 清單與各自對應的 ROADMAP 編號
+
+產生器是 `.github/scripts/ci_summary.py`，讀 `junit.xml` 與 `coverage.json`。
+它以 `if: always()` 執行——**job 失敗時這份摘要最有用**——而且任何例外都會被
+吞掉並印成一段警告，不會把綠燈變紅燈。
+
+要調整「安全關鍵路徑」那張表，改該檔案的 `SAFETY_CRITICAL` 即可。
+本機預覽：
+
+```bash
+uv run pytest --cov=app --cov-report=json:coverage.json --junitxml=junit.xml
+uv run python .github/scripts/ci_summary.py
+```
 
 ### 覆蓋率門檻是一個 ratchet
 

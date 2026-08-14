@@ -66,8 +66,16 @@ jobs:
             --cov=app \
             --cov-report=term-missing \
             --cov-report=xml \
+            --cov-report=json:coverage.json \
             --cov-fail-under=45 \
             --junitxml=junit.xml
+
+      # Renders results into the run's Summary tab so a reviewer sees the
+      # coverage of the safety-critical paths without opening the log.
+      # always(): the summary is most useful precisely when the job failed.
+      - name: Job summary
+        if: always()
+        run: uv run python .github/scripts/ci_summary.py >> "$GITHUB_STEP_SUMMARY"
 
       - name: Upload test results
         if: always()
@@ -77,6 +85,7 @@ jobs:
           path: |
             junit.xml
             coverage.xml
+            coverage.json
           retention-days: 7
           if-no-files-found: warn
 
