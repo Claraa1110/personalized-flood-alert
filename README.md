@@ -2,6 +2,17 @@
 
 基於 AI 與多源資料融合的個人化淹水風險預警 App，使用者可登記財產位置，系統自動監測雨量、評估風險並推播通知。
 
+## 文件
+
+| 文件 | 內容 |
+|------|------|
+| [CLAUDE.md](CLAUDE.md) | 開發指南、架構速覽、**已知地雷**（動手前必讀） |
+| [TESTING.md](TESTING.md) | 測試策略、如何執行與新增測試、已知的驗證缺口 |
+| [docs/ROADMAP.md](docs/ROADMAP.md) | 後端技術審查結果與依優先順序排列的改善項目 |
+
+> ⚠️ 系統目前有數個已知的**靜默失效**路徑（回報「安全」但實際未在監測）。
+> 上架前請先完成 ROADMAP 的 P0 項目。
+
 ## 技術棧
 
 - **前端**：React Native + Expo SDK 54（TypeScript），EAS Build 部署
@@ -36,15 +47,27 @@ cd personalized-flood-alert
 cp .env.example .env
 # 編輯 .env 填入真實 key
 
-# 3. 啟動後端（port 8001）
+# 3. 安裝相依（含測試工具）
+uv sync --group dev
+
+# 4. 啟動後端（port 8001）
 uv run uvicorn app.main:app --reload --port 8001
 
-# 4. 啟動前端
+# 5. 啟動前端
 cd MobileApp
 npx expo start
 ```
 
 後端 API 文件：`http://localhost:8001/docs`
+
+## 測試
+
+```bash
+uv run pytest                    # 不需要 DB、不需要網路
+uv run ruff check .
+```
+
+詳見 [TESTING.md](TESTING.md)。
 
 ## 資料庫 Migration
 

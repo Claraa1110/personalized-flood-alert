@@ -19,3 +19,9 @@ wheels/
 
 # Shapefile data
 data/
+# Test artifacts
+.coverage
+.coverage.*
+htmlcov/
+.pytest_cache/
+.ruff_cache/
