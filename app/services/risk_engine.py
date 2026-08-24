@@ -34,36 +34,6 @@ def _get_push_advice(level: str, prop_type: str) -> str:
     return _PUSH_ADVICE.get(level, {}).get(prop_type) or _PUSH_ADVICE_DEFAULT.get(level, "")
 
 
-async def get_news_signal_near(lat: float, lng: float, db: AsyncSession) -> dict:
-    """查詢附近 30 公里內最嚴重的淹水新聞"""
-    result = await db.execute(
-        text("""
-            SELECT severity
-            FROM news_articles
-            WHERE is_flood_related = true
-            AND location_geom IS NOT NULL
-            AND ST_DWithin(
-                location_geom,
-                ST_MakePoint(:lng, :lat)::geography,
-                30000
-            )
-            AND published_at > NOW() - INTERVAL '6 hours'
-            ORDER BY
-                CASE severity
-                    WHEN 'high' THEN 1
-                    WHEN 'medium' THEN 2
-                    WHEN 'low' THEN 3
-                    ELSE 4
-                END
-            LIMIT 1
-        """),
-        {"lat": lat, "lng": lng},
-    )
-    row = result.fetchone()
-    if row:
-        return {"severity": row.severity, "has_news": True}
-    return {"severity": "none", "has_news": False}
-
 
 async def get_rainfall_for_location(lat: float, lng: float, db: AsyncSession) -> dict:
     """取最近測站的官方 1H/3H/6H 雨量（直接讀氣象署 Past1hr/3hr/6hr）"""
