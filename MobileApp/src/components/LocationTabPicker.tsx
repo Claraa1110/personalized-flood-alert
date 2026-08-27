@@ -5,6 +5,7 @@ import {
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import MapView, { Region } from 'react-native-maps';
+import * as Location from 'expo-location';
 import { apiFetch } from '../lib/api';
 
 const TAIWAN_CENTER: Region = {
@@ -29,7 +30,13 @@ export default function LocationTabPicker({
   initialAddress,
   onLocationChange,
 }: Props) {
-  const [activeTab, setActiveTab] = useState<'address' | 'map'>('address');
+  const [activeTab, setActiveTab] = useState<'address' | 'map' | 'gps'>('address');
+
+  // GPS
+  type GpsState = 'idle' | 'locating' | 'success' | 'error';
+  const [gpsState, setGpsState] = useState<GpsState>('idle');
+  const [gpsLabel, setGpsLabel] = useState<string | null>(null);
+  const [gpsError, setGpsError] = useState<string | null>(null);
 
   // Address geocoding
   const [addressInput, setAddressInput] = useState(initialAddress ?? '');
@@ -46,6 +53,43 @@ export default function LocationTabPicker({
   const [mapConfirmed, setMapConfirmed] = useState(false);
   const [mapAddress, setMapAddress] = useState<string | null>(null);
   const [reverseGeocoding, setReverseGeocoding] = useState(false);
+
+  const handleUseCurrentLocation = async () => {
+    setGpsState('locating');
+    setGpsError(null);
+    setGpsLabel(null);
+
+    const { status } = await Location.requestForegroundPermissionsAsync();
+    if (status !== 'granted') {
+      setGpsState('error');
+      setGpsError('定位權限未授權，請至設定開啟');
+      return;
+    }
+
+    try {
+      const pos = await Location.getCurrentPositionAsync({
+        accuracy: Location.Accuracy.High,
+      });
+      const { latitude, longitude } = pos.coords;
+      onLocationChange(latitude, longitude, null);
+
+      // 反向地理編碼取得地址顯示
+      try {
+        const resp = await apiFetch(`/api/reverse-geocode?lat=${latitude}&lng=${longitude}`);
+        const data = await resp.json();
+        const label = resp.ok ? (data.formatted_address ?? `${latitude.toFixed(4)}, ${longitude.toFixed(4)}`) : `${latitude.toFixed(4)}, ${longitude.toFixed(4)}`;
+        setGpsLabel(label);
+        onLocationChange(latitude, longitude, resp.ok ? data.formatted_address ?? null : null);
+      } catch {
+        setGpsLabel(`${latitude.toFixed(4)}, ${longitude.toFixed(4)}`);
+      }
+
+      setGpsState('success');
+    } catch {
+      setGpsState('error');
+      setGpsError('無法取得位置，請確認定位服務已開啟');
+    }
+  };
 
   const handleGeocode = async () => {
     const q = addressInput.trim();
@@ -86,7 +130,7 @@ export default function LocationTabPicker({
     <View>
       {/* Tab 切換 */}
       <View style={styles.tabs}>
-        {(['address', 'map'] as const).map((tab) => (
+        {(['address', 'map', 'gps'] as const).map((tab) => (
           <TouchableOpacity
             key={tab}
             style={[styles.tab, activeTab === tab && styles.tabActive]}
@@ -94,7 +138,7 @@ export default function LocationTabPicker({
             activeOpacity={0.7}
           >
             <Text style={[styles.tabText, activeTab === tab && styles.tabTextActive]}>
-              {tab === 'address' ? '輸入地址' : '地圖選點'}
+              {tab === 'address' ? '輸入地址' : tab === 'map' ? '地圖選點' : '目前位置'}
             </Text>
           </TouchableOpacity>
         ))}
@@ -146,6 +190,52 @@ export default function LocationTabPicker({
               </View>
             </View>
           ) : null}
+        </View>
+      )}
+
+      {/* 目前位置 */}
+      {activeTab === 'gps' && (
+        <View>
+          <TouchableOpacity
+            style={[
+              styles.gpsBtn,
+              gpsState === 'success' && styles.gpsBtnSuccess,
+              gpsState === 'locating' && styles.gpsBtnDisabled,
+            ]}
+            onPress={handleUseCurrentLocation}
+            disabled={gpsState === 'locating'}
+            activeOpacity={0.8}
+          >
+            {gpsState === 'locating' ? (
+              <ActivityIndicator color="#fff" size="small" />
+            ) : (
+              <Ionicons
+                name="locate"
+                size={18}
+                color="#fff"
+              />
+            )}
+            <Text style={styles.gpsBtnText}>
+              {gpsState === 'locating' ? '定位中…' : '使用目前位置'}
+            </Text>
+          </TouchableOpacity>
+
+          {gpsState === 'success' && gpsLabel && (
+            <View style={[styles.infoBox, styles.infoBoxSuccess]}>
+              <Ionicons name="location" size={14} color="#27AE60" />
+              <View style={{ flex: 1 }}>
+                <Text style={styles.infoBoxTextSuccess} numberOfLines={2}>{gpsLabel}</Text>
+                <Text style={styles.infoBoxCoord}>已更新為目前位置</Text>
+              </View>
+            </View>
+          )}
+
+          {gpsState === 'error' && gpsError && (
+            <View style={styles.infoBox}>
+              <Ionicons name="alert-circle-outline" size={14} color="#C00000" />
+              <Text style={styles.infoBoxTextError}>{gpsError}</Text>
+            </View>
+          )}
         </View>
       )}
 
@@ -249,6 +339,14 @@ const styles = StyleSheet.create({
   infoBoxTextError: { fontSize: 13, color: '#C00000', flex: 1 },
   infoBoxTextSuccess: { fontSize: 13, color: '#1A6B3A', fontWeight: '500', flex: 1 },
   infoBoxCoord: { fontSize: 11, color: '#888', marginTop: 2 },
+
+  gpsBtn: {
+    flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 8,
+    backgroundColor: '#2E75B6', borderRadius: 12, padding: 14,
+  },
+  gpsBtnSuccess: { backgroundColor: '#27AE60' },
+  gpsBtnDisabled: { backgroundColor: '#B0C8E0' },
+  gpsBtnText: { fontSize: 15, color: '#fff', fontWeight: '700' },
 
   mapPickerBtn: {
     flexDirection: 'row', alignItems: 'center', gap: 10,

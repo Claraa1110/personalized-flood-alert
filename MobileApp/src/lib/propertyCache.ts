@@ -15,6 +15,7 @@ export interface PropertyWithRisk {
   level: 'safe' | 'level2' | 'level1';
   risk_action: string | null;
   risk_pct: number;
+  priority_stars: number;
 }
 
 export const PROPERTY_TTL = 5 * 60 * 1000;   // 5 分鐘

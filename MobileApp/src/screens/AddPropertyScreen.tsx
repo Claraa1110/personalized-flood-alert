@@ -6,6 +6,7 @@ import {
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import TypeSelector from '../components/TypeSelector';
+import StarSelector from '../components/StarSelector';
 import { PropertyType } from '../lib/advice';
 import LocationTabPicker from '../components/LocationTabPicker';
 import { apiFetch } from '../lib/api';
@@ -21,6 +22,7 @@ export default function AddPropertyScreen({ onComplete, onCancel }: Props) {
   const [name, setName] = useState('');
   const [type, setType] = useState<PropertyType>('house');
   const [customTypeName, setCustomTypeName] = useState('');
+  const [priorityStars, setPriorityStars] = useState(3);
   const [lat, setLat] = useState<number | null>(null);
   const [lng, setLng] = useState<number | null>(null);
   const [address, setAddress] = useState<string | null>(null);
@@ -39,6 +41,7 @@ export default function AddPropertyScreen({ onComplete, onCancel }: Props) {
         body: JSON.stringify({
           name: name.trim(), type, latitude: lat, longitude: lng, address,
           custom_type_name: type === 'custom' ? customTypeName.trim() || null : null,
+          priority_stars: priorityStars,
         }),
       });
       const data = await resp.json().catch(() => ({}));
@@ -85,6 +88,9 @@ export default function AddPropertyScreen({ onComplete, onCancel }: Props) {
           customTypeName={customTypeName}
           onCustomTypeNameChange={setCustomTypeName}
         />
+
+        <Text style={styles.label}>重要程度</Text>
+        <StarSelector value={priorityStars} onChange={setPriorityStars} />
 
         <Text style={styles.label}>財產位置</Text>
         <LocationTabPicker

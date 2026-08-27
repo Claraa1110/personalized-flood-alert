@@ -13,6 +13,7 @@ class PropertyBase(BaseModel):
     floor_level: Optional[int] = Field(default=1, ge=1)
     alert_enabled: bool = True
     custom_type_name: Optional[str] = None
+    priority_stars: Optional[int] = Field(default=3, ge=1, le=5)
 
 
 class PropertyCreate(PropertyBase):
@@ -32,6 +33,7 @@ class PropertyResponse(BaseModel):
     district_name: Optional[str] = None
     flood_risk_level: Optional[int] = None
     custom_type_name: Optional[str] = None
+    priority_stars: Optional[int] = None
     rainfall_now_mm: Optional[float] = None
     rainfall_1hr_mm: Optional[float] = None
     rainfall_24hr_mm: Optional[float] = None

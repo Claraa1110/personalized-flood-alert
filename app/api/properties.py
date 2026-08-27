@@ -27,6 +27,7 @@ def to_response(prop: Property, rainfall_row=None) -> PropertyResponse:
         district_name=prop.district_name,
         flood_risk_level=prop.flood_risk_level,
         custom_type_name=prop.custom_type_name,
+        priority_stars=prop.priority_stars,
     )
     if rainfall_row:
         response.rainfall_now_mm = rainfall_row.rainfall_mm
@@ -124,6 +125,7 @@ async def create_property(
         district_name=district_name,
         flood_risk_level=flood_risk_level,
         custom_type_name=property_data.custom_type_name if property_data.type == "custom" else None,
+        priority_stars=property_data.priority_stars or 3,
     )
     db.add(prop)
     await db.commit()
@@ -200,6 +202,7 @@ async def update_property(
     prop.district_name = district_name
     prop.flood_risk_level = flood_risk_level
     prop.custom_type_name = property_data.custom_type_name if property_data.type == "custom" else None
+    prop.priority_stars = property_data.priority_stars or 3
 
     await db.commit()
     await db.refresh(prop)

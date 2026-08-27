@@ -1,4 +1,4 @@
-import { useState, useCallback, useMemo } from 'react';
+import { useState, useCallback, useMemo, useEffect } from 'react';
 import {
   View, Text, StyleSheet,
   ActivityIndicator, ScrollView, RefreshControl, TouchableOpacity,
@@ -39,6 +39,7 @@ interface PropertyRisk {
   riskPct: number;
   riskLevel: 'safe' | 'notice' | 'warning' | 'critical';
   topMm: number | null;
+  priorityStars: number;
 }
 
 interface PropertyForecast {
@@ -62,7 +63,7 @@ type DollState = 'sunny' | 'cloudy' | 'level2' | 'level1';
 const DEBUG_STATE: DollState | null = null;
 
 // 測試用：設定假財產，讓二級/一級的行動建議列表可以顯示
-const DEBUG_FAKE_ALERTS: { name: string; type: string; riskLevel: 'warning' | 'critical' }[] | null = null;
+const DEBUG_FAKE_ALERTS: { name: string; type: string; riskLevel: 'warning' | 'critical'; priorityStars: number }[] | null = null;
 
 const STATE_BG: Record<DollState, string> = {
   sunny:  '#dcefff',
@@ -102,6 +103,7 @@ function buildRisk(p: PropertyWithRisk): PropertyRisk {
     id: p.id, name: p.name, type: p.type ?? 'house',
     latitude: p.latitude, longitude: p.longitude, district_name: p.district_name,
     riskPct: p.risk_pct, riskLevel, topMm,
+    priorityStars: p.priority_stars ?? 3,
   };
 }
 
@@ -317,8 +319,6 @@ export default function HomeScreen() {
         const propsWithRisk = riskResult.value;
         const risks = propsWithRisk.map(buildRisk).sort((a, b) => b.riskPct - a.riskPct);
         setPropertyRisks(risks);
-        const hasAlert = risks.some(r => r.riskLevel === 'critical' || r.riskLevel === 'warning');
-        syncAppIcon(hasAlert);
         if (force || forecastStale) {
           setForecastCachedAt(Date.now());
           fetchForecasts(propsWithRisk);
@@ -347,15 +347,24 @@ export default function HomeScreen() {
     return 'sunny';
   }, [propertyRisks]);
 
+  useEffect(() => {
+    syncAppIcon(dollState === 'level1' || dollState === 'level2');
+  }, [dollState]);
+
   const stateText    = STATE_TEXT[dollState];
   const stateBg      = STATE_BG[dollState];
   const isSafe       = dollState === 'sunny' || dollState === 'cloudy';
-  const alertedRisks: PropertyRisk[] = DEBUG_FAKE_ALERTS
+  const _lvOrder: Record<string, number> = { critical: 0, warning: 1, notice: 2, safe: 3 };
+  const alertedRisks: PropertyRisk[] = (DEBUG_FAKE_ALERTS
     ? DEBUG_FAKE_ALERTS.map(d => ({
         id: d.name, name: d.name, type: d.type, latitude: 0, longitude: 0, district_name: null,
-        riskPct: 100, riskLevel: d.riskLevel, topMm: null,
+        riskPct: 100, riskLevel: d.riskLevel, topMm: null, priorityStars: d.priorityStars ?? 3,
       }))
-    : propertyRisks.filter(r => r.riskLevel === 'critical' || r.riskLevel === 'warning');
+    : propertyRisks.filter(r => r.riskLevel === 'critical' || r.riskLevel === 'warning')
+  ).sort((a, b) => {
+    const lvDiff = _lvOrder[a.riskLevel] - _lvOrder[b.riskLevel];
+    return lvDiff !== 0 ? lvDiff : b.priorityStars - a.priorityStars;
+  });
 
   // ── Render ───────────────────────────────────────────────────────────────────
 

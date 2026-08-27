@@ -1,1 +1,1 @@
-from app.models import property, alert, rainfall, news, district, flood_risk  # noqa: F401
+from app.models import property, alert, rainfall, district, flood_risk  # noqa: F401

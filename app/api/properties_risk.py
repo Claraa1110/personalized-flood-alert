@@ -77,7 +77,7 @@ async def get_properties_with_risk(
     props_rows = (await db.execute(text("""
         SELECT
             p.id, p.name, p.type, p.custom_type_name,
-            p.address, p.district_name, p.alert_enabled,
+            p.address, p.district_name, p.alert_enabled, p.priority_stars,
             ST_Y(p.location::geometry) AS lat,
             ST_X(p.location::geometry) AS lng,
             d.town_name, d.county_name
@@ -196,6 +196,7 @@ async def get_properties_with_risk(
             'level': level,
             'risk_action': _get_advice(level, prop_type),
             'risk_pct': round(risk_pct, 1),
+            'priority_stars': int(p.priority_stars) if p.priority_stars is not None else 3,
         })
 
     return results

@@ -3,7 +3,8 @@ import re
 import time
 
 import httpx
-from fastapi import APIRouter, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query
+from app.auth import get_device_id
 
 router = APIRouter()
 
@@ -37,7 +38,10 @@ async def _nominatim_query(client: httpx.AsyncClient, q: str) -> list:
 
 
 @router.get("/geocode")
-async def geocode_address(address: str = Query(..., description="地址")):
+async def geocode_address(
+    address: str = Query(..., description="地址"),
+    device_id: str = Depends(get_device_id),
+):
     """將地址轉換為經緯度（使用 Nominatim / OpenStreetMap）"""
     global _last_call
 
@@ -85,6 +89,7 @@ def _build_tw_address(addr: dict) -> str:
 async def reverse_geocode(
     lat: float = Query(..., ge=-90, le=90),
     lng: float = Query(..., ge=-180, le=180),
+    device_id: str = Depends(get_device_id),
 ):
     """將經緯度轉換為地址（使用 Nominatim reverse geocoding）"""
     global _last_call

@@ -18,7 +18,7 @@ async def cleanup_old_data():
                 WHERE observed_at < NOW() - INTERVAL '48 hours'
             """)
             )
-await session.commit()
+            await session.commit()
             logger.info("舊資料清理完成")
     except Exception as e:
         logger.error(f"資料清理失敗：{e}")
