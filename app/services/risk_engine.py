@@ -161,7 +161,7 @@ async def evaluate_all_properties():
                             break
 
                 if not triggered_level:
-                    print(f"  → 未觸發警報")
+                    print("  → 未觸發警報")
                     continue
 
                 level_label = '一級警戒' if triggered_level == 'level1' else '二級預警'

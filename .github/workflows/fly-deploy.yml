@@ -1,19 +1,32 @@
 # See https://fly.io/docs/app-guides/continuous-deployment-with-github-actions/
 
 name: Fly Deploy
+
 on:
   push:
     branches:
       - main
       - master
+
+permissions:
+  contents: read
+
 jobs:
+  # Deploy is gated on CI. Without this, a push to main ships straight to
+  # production with nothing verified (ROADMAP P0-8).
+  ci:
+    uses: ./.github/workflows/ci.yml
+
   deploy:
     name: Deploy app
+    needs: ci
     runs-on: ubuntu-latest
-    concurrency: deploy-group    # optional: ensure only one action runs at a time
+    concurrency: deploy-group # ensure only one deploy runs at a time
     steps:
-      - uses: actions/checkout@v4
-      - uses: superfly/flyctl-actions/setup-flyctl@master
+      - uses: actions/checkout@v7
+      # Pinned to a commit SHA: this action runs with FLY_API_TOKEN in scope,
+      # so a floating @master ref would execute whatever lands there next.
+      - uses: superfly/flyctl-actions/setup-flyctl@ed8efb33836e8b2096c7fd3ba1c8afe303ebbff1 # master @ 2026-08
       - run: flyctl deploy --remote-only
         env:
           FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}

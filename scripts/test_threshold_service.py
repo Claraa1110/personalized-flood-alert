@@ -22,7 +22,7 @@ async def main():
                 print(f"  6H 門檻：{result['threshold_6h']}mm")
             else:
                 print(f"\n{desc}")
-                print(f"  找不到門檻")
+                print("  找不到門檻")
 
 if __name__ == "__main__":
     asyncio.run(main())
