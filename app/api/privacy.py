@@ -210,7 +210,7 @@ _HTML = """<!DOCTYPE html>
 <header>
   <div class="logo"><img src="/privacy-icon.png" alt="水先知" /></div>
   <h1>水先知 隱私權政策</h1>
-  <div class="date">最後更新日期：2026 年 8 月 9 日</div>
+  <div class="date">最後更新日期：2026 年 9 月 15 日</div>
 </header>
 
 <main>
@@ -258,7 +258,7 @@ _HTML = """<!DOCTYPE html>
     <ul>
       <li>財產資料主要儲存於您的手機裝置本機。</li>
       <li>為提供風險判斷與推播，財產座標、裝置識別碼、推播識別碼與通知偏好會儲存於 Supabase（資料庫服務）及本服務的伺服器。</li>
-      <li>我們採取合理的技術措施保護伺服器上的資料，包含資料庫層級的存取控制（Row Level Security）。</li>
+      <li>我們採取合理的技術措施保護伺服器上的資料，包含每一次資料查詢皆以裝置識別碼進行過濾，確保單一裝置僅能存取自己的資料。</li>
     </ul>
   </section>
 
@@ -322,6 +322,7 @@ _HTML = """<!DOCTYPE html>
     <h2>七、資料保存與刪除</h2>
     <ul>
       <li>財產資料儲存於您的裝置本機，當您在 App 中刪除財產時，該筆資料會從本機及伺服器一併移除。</li>
+      <li>您可前往 App「設定」頁面，點選「刪除所有資料」，一次清除此裝置在伺服器上儲存的所有財產、警報紀錄、推播識別碼與通知偏好設定。</li>
       <li>若您解除安裝本 App，儲存於裝置本機的資料將隨之移除。</li>
       <li>由於本 App 不使用帳號，且裝置識別碼不含個人資訊，我們無法將伺服器上的資料反向對應到特定個人。</li>
     </ul>
@@ -333,7 +334,7 @@ _HTML = """<!DOCTYPE html>
     <ul class="rights-list">
       <li><span class="right-title">查詢與存取：</span>您可在 App 中檢視您登記的所有財產與設定。</li>
       <li><span class="right-title">更正：</span>您可隨時在 App 中修改財產資料與通知偏好。</li>
-      <li><span class="right-title">刪除：</span>您可刪除個別財產，或解除安裝 App 以移除本機資料。</li>
+      <li><span class="right-title">刪除：</span>您可刪除個別財產；或前往「設定 → 刪除所有資料」，一次清除此裝置的所有伺服器資料；或解除安裝 App 以移除本機資料。</li>
       <li><span class="right-title">撤回同意：</span>您可透過設定關閉推播通知。</li>
     </ul>
   </section>

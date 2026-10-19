@@ -3,8 +3,9 @@ import re
 import time
 
 import httpx
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from app.auth import get_device_id
+from app.limiter import limiter
 
 router = APIRouter()
 
@@ -38,7 +39,9 @@ async def _nominatim_query(client: httpx.AsyncClient, q: str) -> list:
 
 
 @router.get("/geocode")
+@limiter.limit("10/minute")
 async def geocode_address(
+    request: Request,
     address: str = Query(..., description="地址"),
     device_id: str = Depends(get_device_id),
 ):
@@ -86,7 +89,9 @@ def _build_tw_address(addr: dict) -> str:
 
 
 @router.get("/reverse-geocode")
+@limiter.limit("10/minute")
 async def reverse_geocode(
+    request: Request,
     lat: float = Query(..., ge=-90, le=90),
     lng: float = Query(..., ge=-180, le=180),
     device_id: str = Depends(get_device_id),
