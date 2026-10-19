@@ -54,7 +54,8 @@
         }
       ],
       "expo-font",
-      "./plugins/withDynamicIcon"
+      "./plugins/withDynamicIcon",
+      "expo-secure-store"
     ],
     "extra": {
       "eas": {

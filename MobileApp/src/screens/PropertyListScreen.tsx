@@ -8,10 +8,10 @@ import { useFocusEffect } from '@react-navigation/native';
 import { Ionicons } from '@expo/vector-icons';
 import AddPropertyScreen from './AddPropertyScreen';
 import TypeSelector from '../components/TypeSelector';
-import StarSelector from '../components/StarSelector';
+import PrioritySlider from '../components/PrioritySlider';
 import LocationTabPicker from '../components/LocationTabPicker';
-import { apiFetch } from '../lib/api';
-import { PropertyType, TYPE_ICONS, getAdvice } from '../lib/advice';
+import { apiFetch, extractErrorMessage } from '../lib/api';
+import { PropertyType, getAdvice } from '../lib/advice';
 import {
   PropertyWithRisk,
   getCachedProperties, isPropertyCacheFresh,
@@ -49,9 +49,14 @@ const GROUP_ORDER: GroupKey[] = ['house', 'car', 'shop', 'other'];
 // null = 正常；設定值可強制所有卡片顯示對應等級（測試用）
 const DEBUG_LEVEL: 'safe' | 'level2' | 'level1' | null = null;
 
+// 測試用：設定假財產清單，展示「有警報 vs 無警報」分類排序與列表呈現差異
+const DEBUG_FAKE_PROPERTIES: PropertyWithRisk[] | null = null;
+
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
 function getRiskDot(level: string | null) {
+  // no_data 不可顯示為安全：灰色中性，明示無法判斷
+  if (level === 'no_data') return { color: '#b0b6bd', label: '無資料' };
   if (!level || level === 'safe') return { color: '#27AE60', label: '安全' };
   if (level === 'level2') return { color: '#F5A623', label: '注意' };
   return { color: '#C00000', label: '警戒' };
@@ -106,7 +111,7 @@ export default function PropertyListScreen() {
   const [editLat, setEditLat] = useState(0);
   const [editLng, setEditLng] = useState(0);
   const [editAddress, setEditAddress] = useState('');
-  const [editPriorityStars, setEditPriorityStars] = useState(3);
+  const [editPriorityStars, setEditPriorityStars] = useState(5);
   const [editSubmitting, setEditSubmitting] = useState(false);
   const [editError, setEditError] = useState<string | null>(null);
 
@@ -137,7 +142,8 @@ export default function PropertyListScreen() {
 
   const onRefresh = () => { setRefreshing(true); fetchData(true); };
 
-  const groups = buildGroups(properties);
+  const displayProperties = DEBUG_FAKE_PROPERTIES ?? properties;
+  const groups = buildGroups(displayProperties);
 
   // ── Edit Handlers ────────────────────────────────────────────────────────────
 
@@ -151,7 +157,7 @@ export default function PropertyListScreen() {
     setEditAddress(p.address ?? '');
     setEditLat(p.latitude);
     setEditLng(p.longitude);
-    setEditPriorityStars(p.priority_stars ?? 3);
+    setEditPriorityStars(p.priority_stars ?? 5);
     setEditError(null);
     setEditModalVisible(true);
   };
@@ -178,7 +184,7 @@ export default function PropertyListScreen() {
       });
       if (!resp.ok) {
         const err = await resp.json().catch(() => ({}));
-        throw new Error((err as any).detail ?? `HTTP ${resp.status}`);
+        throw new Error(extractErrorMessage(err, `HTTP ${resp.status}`));
       }
       closeEdit();
       invalidatePropertyCache();
@@ -247,7 +253,7 @@ export default function PropertyListScreen() {
               customTypeName={editCustomTypeName} onCustomTypeNameChange={setEditCustomTypeName} />
 
             <Text style={styles.inputLabel}>重要程度</Text>
-            <StarSelector value={editPriorityStars} onChange={setEditPriorityStars} />
+            <PrioritySlider value={editPriorityStars} onChange={setEditPriorityStars} />
 
             <Text style={styles.inputLabel}>財產位置</Text>
             <LocationTabPicker
@@ -287,7 +293,7 @@ export default function PropertyListScreen() {
 
   // ── Full-screen states ────────────────────────────────────────────────────────
 
-  if (listLoading && properties.length === 0) {
+  if (listLoading && displayProperties.length === 0) {
     return (
       <View style={[styles.container, styles.center]}>
         <ActivityIndicator size="large" color="#2E75B6" />
@@ -296,7 +302,7 @@ export default function PropertyListScreen() {
     );
   }
 
-  if (listError && properties.length === 0) {
+  if (listError && displayProperties.length === 0) {
     return (
       <View style={[styles.container, styles.center]}>
         <Ionicons name="cloud-offline-outline" size={52} color="#ccc" />
@@ -309,7 +315,7 @@ export default function PropertyListScreen() {
     );
   }
 
-  if (!listLoading && properties.length === 0) {
+  if (!listLoading && displayProperties.length === 0) {
     return (
       <View style={[styles.container, styles.center]}>
         <Ionicons name="home-outline" size={60} color="#ddd" />
@@ -348,13 +354,22 @@ export default function PropertyListScreen() {
                   {advice.icon} {advice.text}
                 </Text>
               : null}
+            {level === 'no_data'
+              ? <Text style={styles.propertyRowNoData} numberOfLines={1}>
+                  目前無可用雨量資料
+                </Text>
+              : null}
           </View>
-          {item.rainfall['1h'] > 0
-            ? <View style={styles.rainfallChip}>
-                <Ionicons name="rainy-outline" size={11} color="#2E75B6" />
-                <Text style={styles.rainfallChipText}>{item.rainfall['1h']}mm</Text>
+          {level === 'no_data'
+            ? <View style={styles.noDataChip}>
+                <Text style={styles.noDataChipText}>--</Text>
               </View>
-            : null}
+            : (item.rainfall['1h'] ?? 0) > 0
+              ? <View style={styles.rainfallChip}>
+                  <Ionicons name="rainy-outline" size={11} color="#2E75B6" />
+                  <Text style={styles.rainfallChipText}>{item.rainfall['1h']}mm</Text>
+                </View>
+              : null}
           <Ionicons name="chevron-forward" size={16} color="#ccc" />
         </TouchableOpacity>
       );
@@ -426,7 +441,7 @@ export default function PropertyListScreen() {
     <View style={styles.container}>
       {/* 統計列 */}
       <View style={styles.statsBar}>
-        <Text style={styles.statsText}>共 {properties.length} 個財產</Text>
+        <Text style={styles.statsText}>共 {displayProperties.length} 個財產</Text>
         {isSyncing && <ActivityIndicator size="small" color="#2E75B6" style={styles.syncIndicator} />}
       </View>
 
@@ -528,6 +543,12 @@ const styles = StyleSheet.create({
     backgroundColor: '#EBF3FB', paddingHorizontal: 7, paddingVertical: 3, borderRadius: 8,
   },
   rainfallChipText: { fontSize: 11, color: '#2E75B6', fontWeight: '600' },
+  propertyRowNoData: { fontSize: 12, color: '#9aa0a6' },
+  noDataChip: {
+    paddingHorizontal: 8, paddingVertical: 3,
+    borderRadius: 8, backgroundColor: '#f0f1f3',
+  },
+  noDataChipText: { fontSize: 11, color: '#9aa0a6', fontWeight: '600' },
   separator: { height: 1, backgroundColor: '#F0F4F8', marginLeft: 41 },
 
   // ── FAB ──

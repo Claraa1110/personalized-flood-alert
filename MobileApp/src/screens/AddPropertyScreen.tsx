@@ -6,10 +6,10 @@ import {
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import TypeSelector from '../components/TypeSelector';
-import StarSelector from '../components/StarSelector';
+import PrioritySlider from '../components/PrioritySlider';
 import { PropertyType } from '../lib/advice';
 import LocationTabPicker from '../components/LocationTabPicker';
-import { apiFetch } from '../lib/api';
+import { apiFetch, extractErrorMessage } from '../lib/api';
 
 interface Props {
   onComplete: () => void;
@@ -22,7 +22,7 @@ export default function AddPropertyScreen({ onComplete, onCancel }: Props) {
   const [name, setName] = useState('');
   const [type, setType] = useState<PropertyType>('house');
   const [customTypeName, setCustomTypeName] = useState('');
-  const [priorityStars, setPriorityStars] = useState(3);
+  const [priorityStars, setPriorityStars] = useState(5);
   const [lat, setLat] = useState<number | null>(null);
   const [lng, setLng] = useState<number | null>(null);
   const [address, setAddress] = useState<string | null>(null);
@@ -45,7 +45,7 @@ export default function AddPropertyScreen({ onComplete, onCancel }: Props) {
         }),
       });
       const data = await resp.json().catch(() => ({}));
-      if (!resp.ok) throw new Error((data as any).detail ?? `HTTP ${resp.status}`);
+      if (!resp.ok) throw new Error(extractErrorMessage(data, `HTTP ${resp.status}`));
       onComplete();
     } catch (e: any) {
       setFormError(e.message ?? '新增失敗');
@@ -90,7 +90,7 @@ export default function AddPropertyScreen({ onComplete, onCancel }: Props) {
         />
 
         <Text style={styles.label}>重要程度</Text>
-        <StarSelector value={priorityStars} onChange={setPriorityStars} />
+        <PrioritySlider value={priorityStars} onChange={setPriorityStars} />
 
         <Text style={styles.label}>財產位置</Text>
         <LocationTabPicker

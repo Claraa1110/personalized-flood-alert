@@ -11,15 +11,21 @@ export interface PropertyWithRisk {
   district_name: string | null;
   latitude: number;
   longitude: number;
-  rainfall: { '1h': number; '3h': number; '6h': number };
-  level: 'safe' | 'level2' | 'level1';
+  // 雨量為 null 代表查無測站資料（非 0），對應 level === 'no_data'
+  rainfall: { '1h': number | null; '3h': number | null; '6h': number | null };
+  level: 'safe' | 'level2' | 'level1' | 'no_data';
   risk_action: string | null;
-  risk_pct: number;
+  risk_pct: number | null;
   priority_stars: number;
+  /** false 代表 10 公里內查無 2 小時內回報的測站，無法判斷風險 */
+  data_available: boolean;
+  station_name: string | null;
+  station_distance_km: number | null;
+  /** 所選測站的觀測時間（ISO 字串，無時區） */
+  observed_at: string | null;
 }
 
 export const PROPERTY_TTL = 5 * 60 * 1000;   // 5 分鐘
-export const FORECAST_TTL = 30 * 60 * 1000;  // 30 分鐘
 
 const STORAGE_KEY = 'cached_properties';
 
@@ -27,7 +33,6 @@ const STORAGE_KEY = 'cached_properties';
 
 let _cache: PropertyWithRisk[] = [];
 let _fetchedAt = 0;
-let _forecastCachedAt = 0;
 let _inflight: Promise<PropertyWithRisk[]> | null = null;
 
 export function getCachedProperties(): PropertyWithRisk[] {
@@ -38,12 +43,14 @@ export function isPropertyCacheFresh(): boolean {
   return _cache.length > 0 && Date.now() - _fetchedAt < PROPERTY_TTL;
 }
 
-export function getForecastCachedAt(): number { return _forecastCachedAt; }
-export function setForecastCachedAt(t: number): void { _forecastCachedAt = t; }
-
 export function invalidatePropertyCache(): void {
   _fetchedAt = 0;
-  _forecastCachedAt = 0;  // 同時讓預報快取失效，新增財產後首頁預報也會重抓
+}
+
+export function clearPropertyCache(): void {
+  _cache = [];
+  _fetchedAt = 0;
+  AsyncStorage.removeItem('cached_properties').catch(() => {});
 }
 
 /**

@@ -13,7 +13,7 @@ class PropertyBase(BaseModel):
     floor_level: Optional[int] = Field(default=1, ge=1)
     alert_enabled: bool = True
     custom_type_name: Optional[str] = None
-    priority_stars: Optional[int] = Field(default=3, ge=1, le=5)
+    priority_stars: Optional[int] = Field(default=5, ge=1, le=10)
 
 
 class PropertyCreate(PropertyBase):

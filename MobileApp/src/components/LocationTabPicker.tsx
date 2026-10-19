@@ -6,7 +6,7 @@ import {
 import { Ionicons } from '@expo/vector-icons';
 import MapView, { Region } from 'react-native-maps';
 import * as Location from 'expo-location';
-import { apiFetch } from '../lib/api';
+import { apiFetch, extractErrorMessage } from '../lib/api';
 
 const TAIWAN_CENTER: Region = {
   latitude: 23.5, longitude: 121.0,
@@ -100,7 +100,7 @@ export default function LocationTabPicker({
     try {
       const resp = await apiFetch(`/api/geocode?address=${encodeURIComponent(q)}`);
       const data = await resp.json();
-      if (!resp.ok) throw new Error(data.detail ?? '地址查詢失敗');
+      if (!resp.ok) throw new Error(extractErrorMessage(data, '地址查詢失敗'));
       setGeocodeResult(data);
       onLocationChange(data.lat, data.lng, addressInput.trim());
     } catch (e: any) {

@@ -52,10 +52,11 @@ export function getAdviceText(
 }
 
 export function getAdvice(
-  level: 'safe' | 'level2' | 'level1' | null,
+  level: 'safe' | 'level2' | 'level1' | 'no_data' | null,
   type: string,
 ): { text: string; bg: string; border: string; icon: string; textColor: string } | null {
-  if (!level || level === 'safe') return null;
+  // no_data（無可用資料）不給行動建議——無法判斷時不應給出任何指示
+  if (!level || level === 'safe' || level === 'no_data') return null;
   const text = getAdviceText(level, type);
   if (level === 'level1') {
     return { text, bg: '#FFF0F0', border: '#FFCCCC', icon: '⚠️', textColor: '#8B0000' };

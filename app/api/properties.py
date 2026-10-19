@@ -1,5 +1,5 @@
 from uuid import UUID
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Request
 from sqlalchemy import select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 from geoalchemy2.shape import from_shape, to_shape
@@ -8,6 +8,7 @@ from app.dependencies import get_db
 from app.models.property import Property
 from app.schemas.property import PropertyCreate, PropertyResponse
 from app.auth import get_device_id
+from app.limiter import limiter
 
 router = APIRouter()
 
@@ -102,7 +103,9 @@ async def lookup_district_and_risk(db: AsyncSession, lat: float, lng: float):
 
 
 @router.post("/properties", response_model=PropertyResponse, status_code=201)
+@limiter.limit("20/minute")
 async def create_property(
+    request: Request,
     property_data: PropertyCreate,
     db: AsyncSession = Depends(get_db),
     device_id: str = Depends(get_device_id),
@@ -125,7 +128,7 @@ async def create_property(
         district_name=district_name,
         flood_risk_level=flood_risk_level,
         custom_type_name=property_data.custom_type_name if property_data.type == "custom" else None,
-        priority_stars=property_data.priority_stars or 3,
+        priority_stars=property_data.priority_stars or 5,
     )
     db.add(prop)
     await db.commit()
@@ -202,7 +205,7 @@ async def update_property(
     prop.district_name = district_name
     prop.flood_risk_level = flood_risk_level
     prop.custom_type_name = property_data.custom_type_name if property_data.type == "custom" else None
-    prop.priority_stars = property_data.priority_stars or 3
+    prop.priority_stars = property_data.priority_stars or 5
 
     await db.commit()
     await db.refresh(prop)

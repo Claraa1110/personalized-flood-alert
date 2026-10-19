@@ -13,8 +13,6 @@ import {
   PropertyWithRisk,
   getCachedProperties, isPropertyCacheFresh,
   fetchPropertiesWithRisk,
-  getForecastCachedAt, setForecastCachedAt,
-  FORECAST_TTL,
 } from '../lib/propertyCache';
 
 // ─── Types ────────────────────────────────────────────────────────────────────
@@ -36,36 +34,30 @@ interface PropertyRisk {
   latitude: number;
   longitude: number;
   district_name: string | null;
-  riskPct: number;
-  riskLevel: 'safe' | 'notice' | 'warning' | 'critical';
+  riskPct: number | null;
+  riskLevel: 'no_data' | 'safe' | 'notice' | 'warning' | 'critical';
   topMm: number | null;
   priorityStars: number;
-}
-
-interface PropertyForecast {
-  id: string;
-  name: string;
-  district_name: string | null;
-  latitude: number;
-  longitude: number;
-  forecastDistrict: string | null;
-  maxPop6h: number | null;
-  temperature: number | null;
+  dataAvailable: boolean;
+  stationName: string | null;
+  stationDistanceKm: number | null;
+  observedAt: string | null;
 }
 
 // ─── Constants ────────────────────────────────────────────────────────────────
 
 // ─── State config ─────────────────────────────────────────────────────────────
 
-type DollState = 'sunny' | 'cloudy' | 'level2' | 'level1';
+type DollState = 'no_data' | 'sunny' | 'cloudy' | 'level2' | 'level1';
 
-// 測試用：改成 'sunny' | 'cloudy' | 'level2' | 'level1' 強制顯示特定狀態
+// 測試用：改成 'no_data' | 'sunny' | 'cloudy' | 'level2' | 'level1' 強制顯示特定狀態
 const DEBUG_STATE: DollState | null = null;
 
 // 測試用：設定假財產，讓二級/一級的行動建議列表可以顯示
 const DEBUG_FAKE_ALERTS: { name: string; type: string; riskLevel: 'warning' | 'critical'; priorityStars: number }[] | null = null;
 
 const STATE_BG: Record<DollState, string> = {
+  no_data: '#eceef0',
   sunny:  '#dcefff',
   cloudy: '#eef1f5',
   level2: '#fff4d6',
@@ -73,6 +65,7 @@ const STATE_BG: Record<DollState, string> = {
 };
 
 const STATE_TEXT: Record<DollState, string> = {
+  no_data: '#6b7280',
   sunny:  '#2c6cb0',
   cloudy: '#5a6b78',
   level2: '#a6791a',
@@ -80,6 +73,7 @@ const STATE_TEXT: Record<DollState, string> = {
 };
 
 const STATE_LABEL: Record<DollState, string> = {
+  no_data: '無資料',
   sunny:  '大晴天',
   cloudy: '多雲',
   level2: '注意',
@@ -89,22 +83,42 @@ const STATE_LABEL: Record<DollState, string> = {
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
 function buildRisk(p: PropertyWithRisk): PropertyRisk {
-  let riskLevel: PropertyRisk['riskLevel'];
-  if      (p.level === 'level1') riskLevel = 'critical';
-  else if (p.level === 'level2') riskLevel = 'warning';
-  else riskLevel = p.risk_pct >= 80 ? 'notice' : 'safe';
+  const dataAvailable = p.data_available !== false && p.level !== 'no_data';
 
-  const r1h = p.rainfall['1h'];
-  const r3h = p.rainfall['3h'];
-  const r6h = p.rainfall['6h'];
-  const topMm = r1h > 0 ? r1h : (r3h > 0 ? r3h : (r6h > 0 ? r6h : null));
+  let riskLevel: PropertyRisk['riskLevel'];
+  if      (!dataAvailable)       riskLevel = 'no_data';
+  else if (p.level === 'level1') riskLevel = 'critical';
+  else if (p.level === 'level2') riskLevel = 'warning';
+  else riskLevel = (p.risk_pct ?? 0) >= 80 ? 'notice' : 'safe';
+
+  // 無資料時 topMm 維持 null，呈現為「--」而非 0mm
+  let topMm: number | null = null;
+  if (dataAvailable) {
+    const r1h = p.rainfall['1h'] ?? 0;
+    const r3h = p.rainfall['3h'] ?? 0;
+    const r6h = p.rainfall['6h'] ?? 0;
+    topMm = r1h > 0 ? r1h : (r3h > 0 ? r3h : (r6h > 0 ? r6h : null));
+  }
 
   return {
     id: p.id, name: p.name, type: p.type ?? 'house',
     latitude: p.latitude, longitude: p.longitude, district_name: p.district_name,
-    riskPct: p.risk_pct, riskLevel, topMm,
-    priorityStars: p.priority_stars ?? 3,
+    riskPct: dataAvailable ? (p.risk_pct ?? 0) : null,
+    riskLevel, topMm,
+    priorityStars: p.priority_stars ?? 5,
+    dataAvailable,
+    stationName: p.station_name ?? null,
+    stationDistanceKm: p.station_distance_km ?? null,
+    observedAt: p.observed_at ?? null,
   };
+}
+
+/** 依風險比值由高至低排序；無資料者（riskPct 為 null）一律排在最後 */
+function byRiskDesc(a: PropertyRisk, b: PropertyRisk): number {
+  if (a.riskPct === null && b.riskPct === null) return 0;
+  if (a.riskPct === null) return 1;
+  if (b.riskPct === null) return -1;
+  return b.riskPct - a.riskPct;
 }
 
 function getAdviceForLevel(riskLevel: PropertyRisk['riskLevel'], type: string): string {
@@ -122,6 +136,7 @@ function formatAlertDate(isoStr: string): string {
 
 function EmojiFace({ state, size = 160 }: { state: DollState; size?: number }) {
   const FACE_FILL: Record<DollState, string> = {
+    no_data: '#cfd4da',
     sunny:  '#ffd23f',
     cloudy: '#dde4ea',
     level2: '#f5c344',
@@ -219,6 +234,8 @@ function EmojiFace({ state, size = 160 }: { state: DollState; size?: number }) {
       {state === 'cloudy' && <Path d="M 50 79 Q 68 89 86 79" stroke={F} strokeWidth={2.5} fill="none" strokeLinecap="round" />}
       {state === 'level2' && <Path d="M 53 81 Q 61 76 68 81 Q 75 86 83 81" stroke={F} strokeWidth={2.5} fill="none" strokeLinecap="round" />}
       {state === 'level1' && <Ellipse cx={68} cy={83} rx={10} ry={9} fill="#7a1c1c" />}
+      {/* no_data：中性平嘴，不暗示安全也不暗示危險 */}
+      {state === 'no_data' && <Line x1={54} y1={81} x2={82} y2={81} stroke={F} strokeWidth={2.5} strokeLinecap="round" />}
 
       {/* ── Cloud on top of face (cloudy) — drawn last so it's above face ── */}
       {state === 'cloudy' && (
@@ -240,60 +257,20 @@ export default function HomeScreen() {
   const navigation = useNavigation<any>();
   const [alerts, setAlerts]               = useState<Alert[]>([]);
   const [propertyRisks, setPropertyRisks] = useState<PropertyRisk[]>(() =>
-    getCachedProperties().map(buildRisk).sort((a, b) => b.riskPct - a.riskPct)
+    getCachedProperties().map(buildRisk).sort(byRiskDesc)
   );
-  const [forecastList, setForecastList]   = useState<PropertyForecast[]>([]);
   const [loading, setLoading]             = useState(() => getCachedProperties().length === 0);
-  const [forecastLoading, setForecastLoading] = useState(false);
   const [isSyncing, setIsSyncing]         = useState(false);
   const [refreshing, setRefreshing]       = useState(false);
-
-  const fetchForecasts = async (props: PropertyWithRisk[]): Promise<void> => {
-    const settled = await Promise.allSettled(
-      props.map(async (p): Promise<PropertyForecast | null> => {
-        const resp = await apiFetch(`/api/forecast?lat=${p.latitude}&lng=${p.longitude}`);
-        if (!resp.ok) return null;
-        const data = await resp.json();
-        const maxPop6h: number | null = data.max_pop_6h ?? null;
-        const temperature: number | null = data.temperature ?? null;
-        if (maxPop6h === null && temperature === null) return null;
-        return {
-          id: p.id, name: p.name, district_name: p.district_name,
-          latitude: p.latitude, longitude: p.longitude,
-          forecastDistrict: data.district_name as string | null,
-          maxPop6h,
-          temperature,
-        };
-      })
-    );
-    setForecastList(
-      settled
-        .map(r => (r.status === 'fulfilled' ? r.value : null))
-        .filter((r): r is PropertyForecast => r !== null)
-        .sort((a, b) => (b.maxPop6h ?? -1) - (a.maxPop6h ?? -1))
-    );
-    setForecastLoading(false);
-  };
+  // 系統層級的雨量最後更新時間（無可用測站時用以說明資料時效）
+  const [lastRainfallMin, setLastRainfallMin] = useState<number | null>(null);
 
   const fetchData = async (force = false) => {
-    const forecastStale = Date.now() - getForecastCachedAt() > FORECAST_TTL;
-
     // 財產快取命中：立即更新 UI，不顯示 spinner
     if (!force && isPropertyCacheFresh()) {
       const cached = getCachedProperties();
       if (cached.length > 0)
-        setPropertyRisks(cached.map(buildRisk).sort((a, b) => b.riskPct - a.riskPct));
-
-      if (!forecastStale) return;  // 預報也是新的 → 完全結束
-
-      // 財產快取新鮮，但預報快取失效（例如剛新增財產）→ 只補抓預報
-      setIsSyncing(true);
-      try {
-        setForecastCachedAt(Date.now());
-        await fetchForecasts(cached);
-      } finally {
-        setIsSyncing(false);
-      }
+        setPropertyRisks(cached.map(buildRisk).sort(byRiskDesc));
       return;
     }
 
@@ -301,13 +278,11 @@ export default function HomeScreen() {
     if (getCachedProperties().length === 0) setLoading(true);
     setIsSyncing(true);
 
-    // 預報 spinner 只在手動下拉更新時顯示，背景更新靜默進行
-    if (force) setForecastLoading(true);
-
     try {
-      const [alertResult, riskResult] = await Promise.allSettled([
+      const [alertResult, riskResult, schedulerResult] = await Promise.allSettled([
         apiFetch('/api/alerts'),
         fetchPropertiesWithRisk(force),
+        apiFetch('/health/scheduler'),
       ]);
 
       if (alertResult.status === 'fulfilled' && alertResult.value.ok) {
@@ -317,14 +292,13 @@ export default function HomeScreen() {
 
       if (riskResult.status === 'fulfilled') {
         const propsWithRisk = riskResult.value;
-        const risks = propsWithRisk.map(buildRisk).sort((a, b) => b.riskPct - a.riskPct);
+        const risks = propsWithRisk.map(buildRisk).sort(byRiskDesc);
         setPropertyRisks(risks);
-        if (force || forecastStale) {
-          setForecastCachedAt(Date.now());
-          fetchForecasts(propsWithRisk);
-        }
-      } else {
-        setForecastLoading(false);
+      }
+
+      if (schedulerResult.status === 'fulfilled' && schedulerResult.value.ok) {
+        const sched = await schedulerResult.value.json();
+        setLastRainfallMin(sched.minutes_since_last_update ?? null);
       }
     } finally {
       setLoading(false);
@@ -343,6 +317,8 @@ export default function HomeScreen() {
     if (DEBUG_STATE) return DEBUG_STATE;
     if (propertyRisks.some(r => r.riskLevel === 'critical')) return 'level1';
     if (propertyRisks.some(r => r.riskLevel === 'warning'))  return 'level2';
+    // 有財產、但全部都查不到雨量資料 → 不可顯示「大晴天」，應明示無法判斷
+    if (propertyRisks.length > 0 && propertyRisks.every(r => !r.dataAvailable)) return 'no_data';
     if (propertyRisks.some(r => r.topMm != null && r.topMm > 0)) return 'cloudy';
     return 'sunny';
   }, [propertyRisks]);
@@ -354,11 +330,17 @@ export default function HomeScreen() {
   const stateText    = STATE_TEXT[dollState];
   const stateBg      = STATE_BG[dollState];
   const isSafe       = dollState === 'sunny' || dollState === 'cloudy';
+  const lastRainfallLabel = lastRainfallMin === null
+    ? null
+    : lastRainfallMin < 1
+      ? '系統雨量資料：剛剛更新'
+      : `系統雨量資料：${Math.round(lastRainfallMin)} 分鐘前更新`;
   const _lvOrder: Record<string, number> = { critical: 0, warning: 1, notice: 2, safe: 3 };
   const alertedRisks: PropertyRisk[] = (DEBUG_FAKE_ALERTS
     ? DEBUG_FAKE_ALERTS.map(d => ({
         id: d.name, name: d.name, type: d.type, latitude: 0, longitude: 0, district_name: null,
-        riskPct: 100, riskLevel: d.riskLevel, topMm: null, priorityStars: d.priorityStars ?? 3,
+        riskPct: 100, riskLevel: d.riskLevel, topMm: null, priorityStars: d.priorityStars ?? 5,
+        dataAvailable: true, stationName: null, stationDistanceKm: null, observedAt: null,
       }))
     : propertyRisks.filter(r => r.riskLevel === 'critical' || r.riskLevel === 'warning')
   ).sort((a, b) => {
@@ -368,44 +350,55 @@ export default function HomeScreen() {
 
   // ── Render ───────────────────────────────────────────────────────────────────
 
-  const renderForecast = () => {
-    if (forecastLoading) {
-      return (
-        <View style={[styles.forecastCard, { backgroundColor: 'rgba(255,255,255,0.45)' }]}>
-          <ActivityIndicator size="small" color={stateText} />
-          <Text style={[styles.forecastLoadText, { color: stateText }]}>查詢降雨預報中…</Text>
-        </View>
-      );
-    }
-    if (forecastList.length === 0) {
-      return (
-        <Text style={[styles.forecastEmpty, { color: stateText }]}>暫無預報資料</Text>
-      );
-    }
-    const getIcon = (pop: number | null) =>
-      pop === null || pop < 20 ? '☀️' : pop < 50 ? '🌦️' : pop < 70 ? '🌧️' : '⛈️';
+  const getBatteryColor = (pct: number): string => {
+    if (pct >= 100) return '#C00000';
+    if (pct >= 75)  return '#E67E22';
+    if (pct >= 40)  return '#F5A623';
+    return '#27AE60';
+  };
 
-    const formatForecast = (pop: number | null, temp: number | null): string => {
-      if (pop !== null && temp !== null) return `降雨機率 ${pop}%・${temp}°C`;
-      if (pop !== null) return `降雨機率 ${pop}%`;
-      if (temp !== null) return `氣溫 ${temp}°C`;
-      return '暫無資料';
-    };
+  const getWeatherIcon = (mm: number | null): string => {
+    if (mm === null || mm <= 0) return '☀️';
+    if (mm <= 10) return '🌦️';
+    if (mm <= 30) return '🌧️';
+    return '⛈️';
+  };
+
+  const renderRiskBattery = () => {
+    if (propertyRisks.length === 0) {
+      return (
+        <Text style={[styles.forecastEmpty, { color: stateText }]}>暫無財產資料</Text>
+      );
+    }
 
     return (
       <View style={styles.forecastGroup}>
-        {forecastList.map(f => {
-          const district = f.forecastDistrict ?? f.district_name ?? '';
+        {propertyRisks.map(r => {
+          // 無可用資料：不填色、不顯示 0mm，改以中性灰與「--」呈現
+          const pct = r.dataAvailable ? Math.max(0, Math.min(r.riskPct ?? 0, 100)) : 0;
+          const color = r.dataAvailable ? getBatteryColor(r.riskPct ?? 0) : '#c4c9cf';
           return (
-            <View key={f.id} style={[styles.forecastCard, { backgroundColor: 'rgba(255,255,255,0.50)' }]}>
-              <Text style={styles.forecastIcon}>{getIcon(f.maxPop6h)}</Text>
-              <View style={styles.forecastBody}>
-                <Text style={[styles.forecastName, { color: stateText }]} numberOfLines={1}>
-                  {f.name}{district ? `（${district}）` : ''}
-                </Text>
-                <Text style={[styles.forecastPop, { color: stateText }]}>
-                  {formatForecast(f.maxPop6h, f.temperature)}
-                </Text>
+            <View key={r.id} style={[styles.forecastCard, { backgroundColor: 'rgba(255,255,255,0.50)' }]}>
+              <Text style={styles.forecastIcon}>
+                {r.dataAvailable ? getWeatherIcon(r.topMm) : '⚪'}
+              </Text>
+              <View style={styles.batteryBody}>
+                <View style={styles.batteryNameRow}>
+                  <Text style={[styles.forecastName, { color: stateText }]} numberOfLines={1}>
+                    {r.name}{r.district_name ? `（${r.district_name}）` : ''}
+                  </Text>
+                  <Text style={[styles.mmText, { color: stateText }]}>
+                    {r.dataAvailable ? `${r.topMm ?? 0}mm` : '--'}
+                  </Text>
+                </View>
+                {!r.dataAvailable && (
+                  <Text style={[styles.noDataNote, { color: stateText }]}>
+                    無可用雨量資料
+                  </Text>
+                )}
+                <View style={styles.batteryTrack}>
+                  <View style={[styles.batteryFill, { width: `${pct}%`, backgroundColor: color }]} />
+                </View>
               </View>
             </View>
           );
@@ -466,7 +459,19 @@ export default function HomeScreen() {
             {STATE_LABEL[dollState]}
           </Text>
 
-          {isSafe ? (
+          {dollState === 'no_data' ? (
+            <View style={styles.safeInfo}>
+              <Text style={[styles.safeText, { color: stateText }]}>
+                目前無可用雨量資料
+              </Text>
+              <Text style={[styles.lastAlertText, { color: stateText }]}>
+                財產所在地 10 公里內查無測站回報，無法判斷風險
+              </Text>
+              <Text style={[styles.lastAlertText, { color: stateText }]}>
+                {lastRainfallLabel ?? '雨量資料更新時間未知'}
+              </Text>
+            </View>
+          ) : isSafe ? (
             <View style={styles.safeInfo}>
               <Text style={[styles.safeText, { color: stateText }]}>
                 你的財產都在安全範圍
@@ -481,9 +486,16 @@ export default function HomeScreen() {
             <View style={styles.adviceList}>
               {alertedRisks.slice(0, 4).map(r => (
                 <View key={r.id} style={[styles.adviceRow, { borderLeftColor: stateText + 'aa' }]}>
-                  <Text style={[styles.advicePropName, { color: stateText }]}>
-                    {r.name}
-                  </Text>
+                  <View style={styles.adviceHeader}>
+                    <Text style={[styles.advicePropName, { color: stateText }]}>
+                      {r.name}
+                    </Text>
+                    <View style={[styles.priorityBadge, { borderColor: stateText + '66' }]}>
+                      <Text style={[styles.priorityBadgeText, { color: stateText }]}>
+                        {r.priorityStars}
+                      </Text>
+                    </View>
+                  </View>
                   <Text style={[styles.adviceText, { color: stateText }]}>
                     {getAdviceForLevel(r.riskLevel, r.type)}
                   </Text>
@@ -494,18 +506,18 @@ export default function HomeScreen() {
         </>
       </View>
 
-      {/* ── Forecast ── */}
+      {/* ── Rainfall Battery ── */}
       <View style={styles.forecastSection}>
         <View style={styles.sectionHeader}>
           <Ionicons name="rainy-outline" size={14} color={stateText} opacity={0.7} />
           <Text style={[styles.sectionHeaderText, { color: stateText }]}>
-            財產所在地降雨預報
+            財產所在地雨量狀態
           </Text>
           {isSyncing && (
             <ActivityIndicator size="small" color={stateText} style={{ marginLeft: 'auto', opacity: 0.5 }} />
           )}
         </View>
-        {renderForecast()}
+        {renderRiskBattery()}
       </View>
     </ScrollView>
   );
@@ -579,8 +591,23 @@ const styles = StyleSheet.create({
     paddingLeft: 12,
     gap: 3,
   },
+  adviceHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+  },
   advicePropName: {
     fontSize: 14,
+    fontWeight: '700',
+  },
+  priorityBadge: {
+    paddingHorizontal: 6,
+    paddingVertical: 1,
+    borderRadius: 8,
+    borderWidth: 1,
+  },
+  priorityBadgeText: {
+    fontSize: 11,
     fontWeight: '700',
   },
   adviceText: {
@@ -617,10 +644,23 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     gap: 12,
   },
-  forecastIcon:     { fontSize: 28 },
-  forecastBody:     { flex: 1, gap: 3 },
-  forecastName:     { fontSize: 13, fontWeight: '600' },
-  forecastPop:      { fontSize: 16, fontWeight: '700' },
-  forecastLoadText: { fontSize: 13, opacity: 0.7 },
+  forecastIcon:     { fontSize: 38 },
+  forecastName:     { fontSize: 15, fontWeight: '600', flexShrink: 1 },
   forecastEmpty:    { fontSize: 13, textAlign: 'center', paddingVertical: 16, opacity: 0.5 },
+  batteryBody:  { flex: 1, gap: 8 },
+  batteryNameRow: {
+    flexDirection: 'row',
+    alignItems: 'baseline',
+    justifyContent: 'space-between',
+    gap: 8,
+  },
+  mmText: { fontSize: 13, opacity: 0.6, flexShrink: 0 },
+  noDataNote: { fontSize: 11, opacity: 0.55, marginTop: -2 },
+  batteryTrack: {
+    width: '85%',
+    height: 10, borderRadius: 5,
+    backgroundColor: 'rgba(0,0,0,0.08)',
+    overflow: 'hidden',
+  },
+  batteryFill: { height: '100%', borderRadius: 5 },
 });

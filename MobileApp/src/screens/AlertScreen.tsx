@@ -39,6 +39,11 @@ interface ParsedMessage {
 // 【財產名稱】達一級警戒 3H 雨量 52.5mm（已達警戒值 45.0mm）
 const MSG_RE = /【(.+?)】達(一級警戒|二級預警)\s+(\w+)\s+雨量\s+([\d.]+)mm（已達(?:警戒|預警)值\s+([\d.]+)mm）/;
 
+// 測試用：設定假警報清單，展示警報頁的完整呈現（不需真實觸發警報）
+const DEBUG_FAKE_ALERTS: Alert[] | null = null;
+
+const DEBUG_FAKE_PROP_DETAILS: Record<string, PropertyDetail> | null = null;
+
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -136,9 +141,12 @@ export default function AlertScreen() {
 
   const onRefresh = () => { setRefreshing(true); fetchAlerts(); };
 
+  const displayAlerts = DEBUG_FAKE_ALERTS ?? alerts;
+  const displayPropDetails = DEBUG_FAKE_PROP_DETAILS ?? propDetails;
+
   // ── States ───────────────────────────────────────────────────────────────────
 
-  if (loading) {
+  if (loading && !DEBUG_FAKE_ALERTS) {
     return (
       <View style={styles.center}>
         <ActivityIndicator size="large" color="#2E75B6" />
@@ -146,7 +154,7 @@ export default function AlertScreen() {
     );
   }
 
-  if (error) {
+  if (error && !DEBUG_FAKE_ALERTS) {
     return (
       <View style={styles.center}>
         <Ionicons name="cloud-offline-outline" size={48} color="#ccc" />
@@ -164,7 +172,7 @@ export default function AlertScreen() {
       ? '剛剛更新'
       : `${Math.round(lastUpdatedMin)} 分鐘前更新`;
 
-  if (alerts.length === 0) {
+  if (displayAlerts.length === 0) {
     return (
       <View style={styles.container}>
         {updateLabel && (
@@ -193,13 +201,13 @@ export default function AlertScreen() {
         </View>
       )}
       <FlatList
-        data={alerts}
+        data={displayAlerts}
         keyExtractor={(item) => item.id}
         contentContainerStyle={styles.listContent}
         refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} />}
         renderItem={({ item }) => {
           const parsed = parseMessage(item.message);
-          const prop = propDetails[item.property_id];
+          const prop = displayPropDetails[item.property_id];
           const typeKey = prop?.type ?? 'other';
           const isLevel1 = item.level === 'level1';
           const accentColor = isLevel1 ? '#C00000' : '#E67E22';
