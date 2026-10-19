@@ -35,24 +35,37 @@ def _get_push_advice(level: str, prop_type: str) -> str:
 
 
 
-async def get_rainfall_for_location(lat: float, lng: float, db: AsyncSession) -> dict:
-    """取最近測站的官方 1H/3H/6H 雨量（直接讀氣象署 Past1hr/3hr/6hr）"""
+async def get_rainfall_for_location(lat: float, lng: float, db: AsyncSession) -> dict | None:
+    """
+    取最近測站的官方 1H/3H/6H 雨量（直接讀氣象署 Past1hr/3hr/6hr）。
+
+    回傳 None 代表 10 公里內找不到 2 小時內回報的測站，即「無法判斷」。
+    這與「測站有回報、但雨量為 0」是不同的狀態，呼叫端必須分開處理：
+    若混為一談，測站全面離線時系統會把所有財產誤判為安全。
+    """
     result = await db.execute(text("""
-        SELECT rainfall_1hr, rainfall_3hr, rainfall_6hr
+        SELECT
+            rainfall_1hr, rainfall_3hr, rainfall_6hr,
+            station_id, station_name, observed_at,
+            ST_Distance(location, ST_MakePoint(:lng, :lat)::geography) AS dist_m
         FROM rainfall_observations
-        WHERE observed_at >= NOW() - INTERVAL '2 hours'
-          AND ST_DWithin(location, ST_MakePoint(:lng, :lat)::geography, 50000)
+        WHERE observed_at >= (NOW() AT TIME ZONE 'Asia/Taipei') - INTERVAL '2 hours'
+          AND ST_DWithin(location, ST_MakePoint(:lng, :lat)::geography, 10000)
         ORDER BY observed_at DESC,
                  ST_Distance(location, ST_MakePoint(:lng, :lat)::geography)
         LIMIT 1
     """), {"lat": lat, "lng": lng})
     row = result.fetchone()
     if not row:
-        return {"rainfall_1hr": 0.0, "rainfall_3hr": 0.0, "rainfall_6hr": 0.0}
+        return None
     return {
         "rainfall_1hr": float(row.rainfall_1hr or 0),
         "rainfall_3hr": float(row.rainfall_3hr or 0),
         "rainfall_6hr": float(row.rainfall_6hr or 0),
+        "station_id": row.station_id,
+        "station_name": row.station_name,
+        "observed_at": row.observed_at,
+        "station_distance_km": round(row.dist_m / 1000, 2),
     }
 
 
@@ -76,6 +89,7 @@ async def evaluate_all_properties():
 
         logger.info(f"開始評估 {len(properties)} 個財產的風險")
         alert_count = 0
+        no_data_count = 0  # 因查無測站而無法判斷的財產數
         pending_pushes: list[dict] = []  # 收集待推播，commit 後統一送
 
         for prop in properties:
@@ -89,6 +103,17 @@ async def evaluate_all_properties():
                 level2_source = thresholds['level2_source']
 
                 rainfall = await get_rainfall_for_location(prop.lat, prop.lng, session)
+                if rainfall is None:
+                    # 查無可用測站 → no_data，無法判斷。
+                    # 不比對門檻、不判定安全、不寫警報、不發推播
+                    no_data_count += 1
+                    logger.warning(
+                        f"財產 {prop.name}（{prop.id}）10 公里內無 2 小時內回報的測站，"
+                        f"狀態為 no_data，略過本次評估"
+                    )
+                    print(f"財產 {prop.id}（{prop.name}）→ no_data，無可用雨量資料")
+                    continue
+
                 r1h = rainfall['rainfall_1hr']
                 r3h = rainfall['rainfall_3hr']
                 r6h = rainfall['rainfall_6hr']
@@ -109,7 +134,7 @@ async def evaluate_all_properties():
                     ('3H', r3h, t1['3h']),
                     ('6H', r6h, t1['6h']),
                 ]:
-                    if thresh and actual and actual >= thresh:
+                    if thresh is not None and actual is not None and actual >= thresh:
                         triggered_level = 'level1'
                         triggered_scale = scale
                         triggered_actual = actual
@@ -123,7 +148,7 @@ async def evaluate_all_properties():
                         ('3H', r3h, t2['3h']),
                         ('6H', r6h, t2['6h']),
                     ]:
-                        if thresh and actual and actual >= thresh:
+                        if thresh is not None and actual is not None and actual >= thresh:
                             triggered_level = 'level2'
                             triggered_scale = scale
                             triggered_actual = actual
@@ -139,6 +164,10 @@ async def evaluate_all_properties():
                 print(f"  → 觸發 {level_label}（{triggered_scale}）")
 
                 # 每個等級各自在 1 小時內不重複發送
+                # 注意：alerts.created_at 雖為 naive 欄位，但存的是 UTC（由下方 NOW() 寫入），
+                # 與此處的 NOW() 同基準，故此比較正確。
+                # 切勿改為 (NOW() AT TIME ZONE 'Asia/Taipei')——那會讓比較基準超前 8 小時，
+                # 條件恆為假，抑制機制失效，變成每 10 分鐘重複推播一次。
                 existing = await session.execute(text("""
                     SELECT id FROM alerts
                     WHERE property_id = :pid
@@ -154,6 +183,9 @@ async def evaluate_all_properties():
                     f'【{prop.name}】達{level_label} {triggered_scale} '
                     f'雨量 {triggered_actual}mm（已達{threshold_label} {triggered_threshold}mm）'
                 )
+                # created_at 以 NOW()（UTC）寫入，與上方抑制查詢、下方 badge 計數
+                # 及前端補 'Z' 當 UTC 解讀的邏輯一致。切勿改為 Asia/Taipei，
+                # 否則新舊資料基準不一，抑制與 badge 計數都會錯亂。
                 await session.execute(text("""
                     INSERT INTO alerts
                         (id, property_id, level, message, triggered_by, created_at)
@@ -187,7 +219,10 @@ async def evaluate_all_properties():
                 continue
 
         await session.commit()
-        logger.info(f"風險評估完成，觸發 {alert_count} 個警報")
+        logger.info(
+            f"風險評估完成，觸發 {alert_count} 個警報"
+            f"（{no_data_count} 個財產因查無測站列為 no_data）"
+        )
 
         # commit 後送推播（不影響警報記錄）
         for push in pending_pushes:
@@ -212,6 +247,9 @@ async def evaluate_all_properties():
                 if not tokens:
                     continue
 
+                # alerts.created_at 存 UTC，與此處 NOW() 同基準，比較正確。
+                # 切勿改為 Asia/Taipei——基準超前 8 小時會讓條件恆為假，
+                # badge 永遠算出 0 筆而退回預設值 1，未讀數字失準。
                 badge_row = await session.execute(text("""
                     SELECT COUNT(DISTINCT a.property_id) AS cnt
                     FROM alerts a

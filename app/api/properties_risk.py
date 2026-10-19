@@ -31,7 +31,8 @@ _ADVICE_DEFAULT = {
 
 
 def _get_advice(level: str, prop_type: str) -> str | None:
-    if level == 'safe':
+    # no_data（無法判斷）與 safe 一樣不給行動建議
+    if level in ('safe', 'no_data'):
         return None
     return _ADVICE.get(level, {}).get(prop_type) or _ADVICE_DEFAULT.get(level)
 
@@ -40,9 +41,17 @@ def _f(v) -> float | None:
     return float(v) if v is not None else None
 
 
-def _evaluate(r1h: float, r3h: float, r6h: float,
-               t1: dict, t2: dict) -> tuple[str, float]:
-    """Return (level, risk_pct). risk_pct = max rainfall as % of level2 threshold."""
+def _evaluate(r1h: float | None, r3h: float | None, r6h: float | None,
+               t1: dict, t2: dict) -> tuple[str, float | None]:
+    """
+    Return (level, risk_pct). risk_pct = max rainfall as % of level2 threshold.
+
+    任一時距雨量為 None 代表查無測站資料 → 回傳 ('no_data', None)，
+    不進入門檻比對。絕不可把 None 當 0 處理，否則會誤判為安全。
+    """
+    if r1h is None or r3h is None or r6h is None:
+        return 'no_data', None
+
     for actual, key in [(r1h, '1h'), (r3h, '3h'), (r6h, '6h')]:
         thresh = t1.get(key)
         if thresh and actual >= thresh:
@@ -97,18 +106,29 @@ async def get_properties_with_risk(
         return []
 
     # ── Query 2: 各財產雨量 ────────────────────────────────────────────────
+    # 不使用 COALESCE 把 NULL 轉 0：必須保留「查無測站」與「測站回報 0」的差別。
+    # found 欄位在有 join 到測站時為 TRUE，查無測站時為 NULL。
     rainfall_rows = (await db.execute(text("""
         SELECT
             p.id AS property_id,
-            COALESCE(r.rainfall_1hr, 0) AS r1h,
-            COALESCE(r.rainfall_3hr, 0) AS r3h,
-            COALESCE(r.rainfall_6hr, 0) AS r6h
+            r.found AS found,
+            r.rainfall_1hr AS r1h,
+            r.rainfall_3hr AS r3h,
+            r.rainfall_6hr AS r6h,
+            r.station_id AS station_id,
+            r.station_name AS station_name,
+            r.observed_at AS observed_at,
+            r.dist_m AS dist_m
         FROM properties p
         LEFT JOIN LATERAL (
-            SELECT rainfall_1hr, rainfall_3hr, rainfall_6hr
+            SELECT
+                TRUE AS found,
+                rainfall_1hr, rainfall_3hr, rainfall_6hr,
+                station_id, station_name, observed_at,
+                ST_Distance(location, p.location) AS dist_m
             FROM rainfall_observations
-            WHERE observed_at >= NOW() - INTERVAL '2 hours'
-              AND ST_DWithin(location, p.location, 50000)
+            WHERE observed_at >= (NOW() AT TIME ZONE 'Asia/Taipei') - INTERVAL '2 hours'
+              AND ST_DWithin(location, p.location, 10000)
             ORDER BY observed_at DESC, ST_Distance(location, p.location)
             LIMIT 1
         ) r ON true
@@ -152,10 +172,39 @@ async def get_properties_with_risk(
     # ── Compute risk per property ──────────────────────────────────────────────
     results = []
     for p in props_rows:
+        prop_base = {
+            'id': str(p.id),
+            'name': p.name,
+            'type': (p.type or 'custom'),
+            'custom_type_name': p.custom_type_name,
+            'address': p.address,
+            'district_name': p.district_name,
+            'latitude': float(p.lat),
+            'longitude': float(p.lng),
+            'priority_stars': int(p.priority_stars) if p.priority_stars is not None else 5,
+        }
+
         rain = rainfall_map.get(str(p.id))
-        r1h = float(rain.r1h) if rain else 0.0
-        r3h = float(rain.r3h) if rain else 0.0
-        r6h = float(rain.r6h) if rain else 0.0
+
+        # 查無測站 → no_data。雨量保留 null，不得當成 0 而判定為安全。
+        if rain is None or not rain.found:
+            results.append({
+                **prop_base,
+                'rainfall': {'1h': None, '3h': None, '6h': None},
+                'level': 'no_data',
+                'risk_action': None,
+                'risk_pct': None,
+                'data_available': False,
+                'station_name': None,
+                'station_distance_km': None,
+                'observed_at': None,
+            })
+            continue
+
+        # 測站有回報：個別時距若為 NULL 視為該時距無累積雨量（0）
+        r1h = float(rain.r1h or 0)
+        r3h = float(rain.r3h or 0)
+        r6h = float(rain.r6h or 0)
 
         wra = wra_map.get(p.town_name) if p.town_name else None
         t1 = {k: v for k, v in (wra['l1'] if wra else {}).items() if v is not None}
@@ -180,23 +229,18 @@ async def get_properties_with_risk(
         else:
             t2 = {}
 
-        prop_type = (p.type or 'custom')
         level, risk_pct = _evaluate(r1h, r3h, r6h, t1, t2)
 
         results.append({
-            'id': str(p.id),
-            'name': p.name,
-            'type': prop_type,
-            'custom_type_name': p.custom_type_name,
-            'address': p.address,
-            'district_name': p.district_name,
-            'latitude': float(p.lat),
-            'longitude': float(p.lng),
+            **prop_base,
             'rainfall': {'1h': r1h, '3h': r3h, '6h': r6h},
             'level': level,
-            'risk_action': _get_advice(level, prop_type),
-            'risk_pct': round(risk_pct, 1),
-            'priority_stars': int(p.priority_stars) if p.priority_stars is not None else 3,
+            'risk_action': _get_advice(level, prop_base['type']),
+            'risk_pct': round(risk_pct, 1) if risk_pct is not None else None,
+            'data_available': True,
+            'station_name': rain.station_name,
+            'station_distance_km': round(rain.dist_m / 1000, 2) if rain.dist_m is not None else None,
+            'observed_at': rain.observed_at.isoformat() if rain.observed_at else None,
         })
 
     return results

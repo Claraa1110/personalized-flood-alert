@@ -6,6 +6,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.dependencies import get_db
 from app.services.cwa_service import get_qpe_rainfall
+from app.utils import now_taipei_naive
 
 router = APIRouter()
 
@@ -55,7 +56,7 @@ async def get_rainfall(
                     ) AS rn
                 FROM rainfall_observations
                 WHERE station_name = :station_name
-                  AND observed_at >= NOW() - INTERVAL '7 hours'
+                  AND observed_at >= (NOW() AT TIME ZONE 'Asia/Taipei') - INTERVAL '7 hours'
             )
             SELECT mm, observed_at
             FROM ranked
@@ -97,7 +98,8 @@ async def get_rainfall_history(
     db: AsyncSession = Depends(get_db),
 ):
     """給定座標，回傳過去 N 小時的雨量時序資料"""
-    since = datetime.now() - timedelta(hours=hours)
+    # observed_at 存的是臺北當地時間，此處必須以同基準產生比較值
+    since = now_taipei_naive() - timedelta(hours=hours)
 
     result = await db.execute(
         text("""

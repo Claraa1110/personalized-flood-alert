@@ -1,3 +1,4 @@
+import logging
 import os
 import xml.etree.ElementTree as ET
 from datetime import datetime
@@ -6,6 +7,9 @@ import httpx
 from sqlalchemy import text
 
 from app.database import AsyncSessionLocal
+from app.utils import now_taipei_naive
+
+logger = logging.getLogger(__name__)
 
 QPE_NS = {"cwa": "urn:cwa:gov:tw:cwacommon:0.1"}
 
@@ -74,6 +78,9 @@ async def save_rainfall_observations(stations: list):
 
             rainfall_elem = station.get("RainfallElement", {})
             # 直接使用氣象署算好的官方值，不自己計算滑動視窗
+            rainfall_now = parse_rainfall(
+                rainfall_elem.get("Now", {}).get("Precipitation")
+            )
             rainfall_1hr = parse_rainfall(
                 rainfall_elem.get("Past1hr", {}).get("Precipitation")
             )
@@ -84,12 +91,18 @@ async def save_rainfall_observations(stations: list):
                 rainfall_elem.get("Past6hr", {}).get("Precipitation")
             )
 
+            # ObsTime.DateTime 為帶 +08:00 的臺北時間，剝除時區後保留臺北牆上時鐘值。
+            # 缺漏時以擷取當下的臺北時間替代——不可用 datetime.now()，
+            # 容器時區為 UTC 會讓該筆資料與其他筆差 8 小時。
             obs_time_str = station.get("ObsTime", {}).get("DateTime", "")
-            observed_at = (
-                datetime.fromisoformat(obs_time_str).replace(tzinfo=None)
-                if obs_time_str
-                else datetime.now()
-            )
+            if obs_time_str:
+                observed_at = datetime.fromisoformat(obs_time_str).replace(tzinfo=None)
+            else:
+                observed_at = now_taipei_naive()
+                logger.warning(
+                    "ObsTime 缺漏，使用擷取時間替代（測站 %s / %s）",
+                    station.get("StationId"), station.get("StationName"),
+                )
 
             geo = station.get("GeoInfo", {})
 
@@ -98,12 +111,13 @@ async def save_rainfall_observations(stations: list):
                     text("""
                         INSERT INTO rainfall_observations
                             (source, latitude, longitude, location,
-                             rainfall_1hr, rainfall_3hr, rainfall_6hr,
+                             rainfall_mm, rainfall_1hr, rainfall_3hr, rainfall_6hr,
                              station_id, station_name, county_name, town_name, observed_at)
                         VALUES (
                             'station',
                             :lat, :lng,
                             ST_MakePoint(:lng, :lat)::geography,
+                            :rainfall_mm,
                             :rainfall_1hr,
                             :rainfall_3hr,
                             :rainfall_6hr,
@@ -113,10 +127,12 @@ async def save_rainfall_observations(stations: list):
                             :town_name,
                             :observed_at
                         )
+                        ON CONFLICT (station_id, observed_at) DO NOTHING
                     """),
                     {
                         "lat": lat,
                         "lng": lng,
+                        "rainfall_mm": rainfall_now,
                         "rainfall_1hr": rainfall_1hr,
                         "rainfall_3hr": rainfall_3hr,
                         "rainfall_6hr": rainfall_6hr,
@@ -187,7 +203,7 @@ async def get_nearest_station_rainfall(lat: float, lng: float) -> dict:
                        station_name,
                        ST_Distance(location, ST_MakePoint(:lng, :lat)::geography) AS dist_m
                 FROM rainfall_observations
-                WHERE observed_at >= NOW() - INTERVAL '2 hours'
+                WHERE observed_at >= (NOW() AT TIME ZONE 'Asia/Taipei') - INTERVAL '2 hours'
                   AND ST_DWithin(location, ST_MakePoint(:lng, :lat)::geography, 50000)
                 ORDER BY observed_at DESC, dist_m
                 LIMIT 1

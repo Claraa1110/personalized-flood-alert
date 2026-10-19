@@ -76,6 +76,8 @@ async def get_alert_detail(
     if not row:
         raise HTTPException(status_code=404, detail="找不到這個警報")
 
+    # read_at 與 created_at 同樣以 NOW()（UTC）寫入，前端補 'Z' 當 UTC 解讀。
+    # 切勿改為 Asia/Taipei，否則已讀時間會比實際超前 8 小時，與 created_at 基準不一。
     await db.execute(
         text("UPDATE alerts SET read_at = NOW() WHERE id = :alert_id AND read_at IS NULL"),
         {"alert_id": str(alert_id)},
@@ -99,6 +101,8 @@ async def mark_all_read(
     db: AsyncSession = Depends(get_db),
     device_id: str = Depends(get_device_id),
 ):
+    # 同上：read_at 存 UTC，與 created_at 及前端解讀一致。
+    # 切勿改為 Asia/Taipei，會造成已讀時間基準與建立時間不一致。
     await db.execute(
         text("""
             UPDATE alerts SET read_at = NOW()
