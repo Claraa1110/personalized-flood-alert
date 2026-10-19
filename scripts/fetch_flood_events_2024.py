@@ -5,6 +5,7 @@ import httpx
 from datetime import datetime
 from sqlalchemy import text
 from app.database import AsyncSessionLocal
+from app.utils import normalize_place_name
 from dotenv import load_dotenv
 
 load_dotenv()
@@ -157,9 +158,11 @@ async def save_events(events: list[dict]) -> int:
     async with AsyncSessionLocal() as session:
         for event in events:
             try:
-                county = event.get("county")
-                district = event.get("district")
-                village = event.get("village")
+                # LLM 回傳的地名多為俗寫「台」，入庫前統一正規化為官方寫法「臺」，
+                # 以免後續與 districts / wra_alert_thresholds 比對失敗
+                county = normalize_place_name(event.get("county"))
+                district = normalize_place_name(event.get("district"))
+                village = normalize_place_name(event.get("village"))
                 event_time_raw = event.get("event_time")
                 description = event.get("description", "")
                 confidence = event.get("confidence", "low")

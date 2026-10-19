@@ -1,6 +1,7 @@
 import asyncio
 from sqlalchemy import text
 from app.database import AsyncSessionLocal
+from app.utils import normalize_place_name
 
 PCT_THRESHOLD = 0.6  # 60% 有效比例門檻
 
@@ -21,8 +22,11 @@ async def main():
         calibrated = 0
 
         for loc in locations:
-            county = loc.county_name
-            district = loc.district_name
+            # 來源 flood_events 由 LLM 萃取，地名可能是俗寫「台」。
+            # 寫入 corrected_thresholds 前先正規化為「臺」，
+            # 否則與 districts / wra_alert_thresholds 比對會失敗。
+            county = normalize_place_name(loc.county_name)
+            district = normalize_place_name(loc.district_name)
 
             # 取得這個地點的所有事件
             result = await session.execute(text('''
