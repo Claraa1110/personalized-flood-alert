@@ -4,6 +4,7 @@ from sqlalchemy import text
 from app.database import AsyncSessionLocal
 from app.services.cwa_service import fetch_rainfall_stations
 from app.services.risk_engine import evaluate_all_properties
+from app.utils import TAIPEI
 
 logger = logging.getLogger(__name__)
 scheduler = AsyncIOScheduler()
@@ -15,7 +16,7 @@ async def cleanup_old_data():
             await session.execute(
                 text("""
                 DELETE FROM rainfall_observations
-                WHERE observed_at < NOW() - INTERVAL '48 hours'
+                WHERE observed_at < (NOW() AT TIME ZONE 'Asia/Taipei') - INTERVAL '48 hours'
             """)
             )
             await session.commit()
@@ -43,15 +44,15 @@ def setup_scheduler():
         max_instances=1,
     )
 
+    # 僅此 job 指定時區：容器時區為 UTC，不指定的話會在臺北時間 11:00 執行。
+    # 這裡只設定單一 job 的 trigger 時區，不影響 scheduler 全域設定與其他 job。
     scheduler.add_job(
         cleanup_old_data,
         "cron",
         hour=3,
+        timezone=TAIPEI,
         id="cleanup",
         replace_existing=True,
     )
-
-    # TODO 第 7 週（前端完成後才開放）
-    # scheduler.add_job(send_push_notifications, 'interval', minutes=10)
 
     return scheduler
