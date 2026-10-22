@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import {
   View, Text, StyleSheet, TextInput, TouchableOpacity,
-  ScrollView, ActivityIndicator, KeyboardAvoidingView, Platform,
+  ScrollView, ActivityIndicator, KeyboardAvoidingView, Platform, Alert,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
@@ -46,6 +46,15 @@ export default function AddPropertyScreen({ onComplete, onCancel }: Props) {
       });
       const data = await resp.json().catch(() => ({}));
       if (!resp.ok) throw new Error(extractErrorMessage(data, `HTTP ${resp.status}`));
+
+      // 新增已成功，但該座標無測站覆蓋時提示使用者——不阻擋流程
+      const warning = (data as any).station_warning;
+      if (warning) {
+        Alert.alert('已新增，但需注意', warning, [
+          { text: '我知道了', onPress: onComplete },
+        ]);
+        return;
+      }
       onComplete();
     } catch (e: any) {
       setFormError(e.message ?? '新增失敗');

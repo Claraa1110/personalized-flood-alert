@@ -182,13 +182,19 @@ export default function PropertyListScreen() {
           priority_stars: editPriorityStars,
         }),
       });
+      const data = await resp.json().catch(() => ({}));
       if (!resp.ok) {
-        const err = await resp.json().catch(() => ({}));
-        throw new Error(extractErrorMessage(err, `HTTP ${resp.status}`));
+        throw new Error(extractErrorMessage(data, `HTTP ${resp.status}`));
       }
       closeEdit();
       invalidatePropertyCache();
       fetchData(true);
+
+      // 儲存已成功，但新座標無測站覆蓋時提示
+      const warning = (data as any).station_warning;
+      if (warning) {
+        Alert.alert('已儲存，但需注意', warning, [{ text: '我知道了' }]);
+      }
     } catch (e: any) {
       setEditError(e.message ?? '儲存失敗');
     } finally {

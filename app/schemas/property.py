@@ -37,4 +37,6 @@ class PropertyResponse(BaseModel):
     rainfall_now_mm: Optional[float] = None
     rainfall_1hr_mm: Optional[float] = None
     rainfall_24hr_mm: Optional[float] = None
+    # 新增／編輯成功但該座標 10 公里內無測站時回傳提示文字；其餘情況為 None
+    station_warning: Optional[str] = None
     model_config = ConfigDict(from_attributes=True)
